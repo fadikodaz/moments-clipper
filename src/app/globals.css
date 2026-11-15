@@ -1,26 +1,130 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@custom-variant dark (&:is(.dark *));
 
+/*
+  Moments design tokens (final v2, graphite).
+  Rule: orange ("moment") marks the moment only: top scores, the peak, the one main next step.
+  Everything else stays neutral. shadcn names are kept so its components work unchanged.
+*/
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  /* Moments additions */
+  --color-sidebar: var(--sidebar);
+  --color-panel: var(--panel);
+  --color-raised: var(--raised);
+  --color-hover: var(--hover);
+  --color-border-strong: var(--border-strong);
+  --color-subtle: var(--subtle);
+  --color-moment: var(--moment);
+  --color-moment-soft: var(--moment-soft);
+  --color-moment-ink: var(--moment-ink);
+  --color-good: var(--good);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --color-info: var(--info);
+
+  --font-sans: var(--font-geist-sans), system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --font-heading: var(--font-geist-sans), system-ui, sans-serif;
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+
+  --animate-draw: draw 1.4s ease-out 0.15s forwards;
+  --animate-pop: pop 0.4s ease-out 1.2s forwards;
+
+  @keyframes draw {
+    to { stroke-dashoffset: 0; }
+  }
+  @keyframes pop {
+    from { opacity: 0; transform: scale(0.2); }
+    to { opacity: 1; transform: scale(1); }
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+:root {
+  --background: #101113;
+  --foreground: #f4f4f5;
+  --sidebar: #0d0e10;
+  --panel: #16171a;
+  --raised: #1d1f23;
+  --hover: #24262b;
+  --border: #2a2c31;
+  --border-strong: #3a3d44;
+  --subtle: #6b6e76;
+
+  --card: var(--panel);
+  --card-foreground: var(--foreground);
+  --popover: var(--panel);
+  --popover-foreground: var(--foreground);
+  --primary: #f4f4f5;
+  --primary-foreground: #101113;
+  --secondary: var(--raised);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--raised);
+  --muted-foreground: #9b9ca3;
+  --accent: var(--raised);
+  --accent-foreground: var(--foreground);
+  --destructive: #f87171;
+  --input: var(--border);
+  --ring: var(--moment);
+
+  --moment: #ff7448;
+  --moment-soft: rgb(255 116 72 / 0.13);
+  --moment-ink: #1f0b03;
+  --good: #4ade80;
+  --warn: #fbbf24;
+  --bad: #f87171;
+  --info: #60a5fa;
+
+  --radius: 8px;
+  color-scheme: dark;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+  }
+  body {
+    @apply bg-background text-foreground text-[13px] leading-normal antialiased;
+  }
+  :focus-visible {
+    outline: 2px solid var(--moment);
+    outline-offset: 1px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
