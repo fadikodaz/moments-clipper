@@ -34,6 +34,9 @@ yarn-error.log*
 .env*
 !.env.example
 
+# uploaded videos and engine output (local jobs)
+/data/
+
 # local test media and logs (recordings can be many GB)
 *.mp4
 *.mov

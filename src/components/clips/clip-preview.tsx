@@ -105,6 +105,27 @@ function Frame({ clip }: { clip: ReviewClip }) {
  * style over placeholder art; the real one plays a short preview MP4 with burned-in captions.
  */
 export function ClipPreview({ clip, className }: { clip: ReviewClip; className?: string }) {
+  if (clip.videoUrl) return <RealPreview clip={clip} className={className} />;
+  return <DrawnPreview clip={clip} className={className} />;
+}
+
+/** The finished short from the engine: layout, captions and opening line are already burned in. */
+function RealPreview({ clip, className }: { clip: ReviewClip; className?: string }) {
+  return (
+    <video
+      key={clip.id}
+      src={clip.videoUrl}
+      poster={clip.posterUrl}
+      controls
+      playsInline
+      preload="metadata"
+      aria-label={`Preview of ${clip.title}`}
+      className={cn("block aspect-[9/16] rounded-[14px] border bg-black object-contain", className)}
+    />
+  );
+}
+
+function DrawnPreview({ clip, className }: { clip: ReviewClip; className?: string }) {
   const words = useMemo(() => clip.words.split(/\s+/).filter(Boolean), [clip.words]);
   const reducedMotion = useReducedMotion();
   const [index, setIndex] = useState(0);

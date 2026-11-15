@@ -46,7 +46,11 @@ function SideItem({ item, active }: { item: NavItem; active: boolean }) {
 }
 
 export function Sidebar() {
-  const pathname = usePathname();
+  return <SidebarView pathname={usePathname()} />;
+}
+
+/** Rendered with an empty path while the URL is still unknown (dynamic routes), then with the real one. */
+export function SidebarView({ pathname }: { pathname: string }) {
   const pct = Math.round((user.hoursUsed / user.hoursLimit) * 100);
 
   return (
@@ -93,7 +97,10 @@ export function Sidebar() {
 }
 
 export function MobileTabBar() {
-  const pathname = usePathname();
+  return <MobileTabBarView pathname={usePathname()} />;
+}
+
+export function MobileTabBarView({ pathname }: { pathname: string }) {
   const items = NAV.flatMap((g) => g.items).filter((i) => i.mobile && i.href);
 
   return (

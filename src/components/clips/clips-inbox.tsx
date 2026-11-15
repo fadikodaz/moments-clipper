@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, LayoutGrid, List, Pencil, Search, X } from "lucide-react";
-import { SceneThumb } from "@/components/media/scene-thumb";
+import { ClipThumb } from "./clip-thumb";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { CAPTION_STYLES, LAYOUTS, SEARCH_ALIASES, formatDuration, type CaptionStyle, type Clip, type ClipLayout, type Project } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
@@ -119,7 +119,7 @@ export function ClipsInbox({ project }: { project: Project }) {
       else if (key === "enter") {
         // Only when nothing else has focus or a clip row has focus, so buttons and links keep their own Enter.
         const t = e.target as HTMLElement;
-        if (t === document.body || t.closest("[data-row]")) router.push(`/clips/${current.id}/edit`);
+        if (!current.videoUrl && (t === document.body || t.closest("[data-row]"))) router.push(`/clips/${current.id}/edit`);
       }
     }
     window.addEventListener("keydown", onKey);
@@ -409,7 +409,7 @@ function ClipRow({ clip, current, checked, onCheck, onSelect }: { clip: ReviewCl
     >
       <input type="checkbox" checked={checked} onChange={(e) => onCheck(e.target.checked)} aria-label={`Select ${clip.title}`} className="accent-moment" />
       <span className="block h-[60px] w-[34px] overflow-hidden rounded-[5px]">
-        <SceneThumb kind={clip.kind} seed={clip.seed} orientation="vertical" />
+        <ClipThumb clip={clip} />
       </span>
       <span className="min-w-0">
         <span className="block truncate font-medium">{clip.title}</span>
@@ -431,11 +431,12 @@ function GridCard({ clip, checked, onCheck, onDecide }: { clip: ReviewClip; chec
   return (
     <article className={cn("relative grid content-start gap-1.5", clip.status === "removed" && "opacity-45")}>
       <Link
-        href={`/clips/${clip.id}/edit`}
-        aria-label={`Edit ${clip.title}`}
+        href={clip.videoUrl ?? `/clips/${clip.id}/edit`}
+        target={clip.videoUrl ? "_blank" : undefined}
+        aria-label={clip.videoUrl ? `Play ${clip.title}` : `Edit ${clip.title}`}
         className={cn("block aspect-[9/16] overflow-hidden rounded-[10px] border bg-black", clip.status === "kept" && "border-good", checked && "border-moment")}
       >
-        <SceneThumb kind={clip.kind} seed={clip.seed} orientation="vertical" />
+        <ClipThumb clip={clip} />
       </Link>
       <label className="absolute top-2 left-2">
         <input type="checkbox" checked={checked} onChange={(e) => onCheck(e.target.checked)} aria-label={`Select ${clip.title}`} className="accent-moment" />
@@ -449,9 +450,11 @@ function GridCard({ clip, checked, onCheck, onDecide }: { clip: ReviewClip; chec
         <button type="button" onClick={() => onDecide("kept")} title="Keep" aria-label={`Keep ${clip.title}`} className={cn(iconBtn, "size-[30px]", clip.status === "kept" && "text-good")}>
           <Check className="size-4" />
         </button>
-        <Link href={`/clips/${clip.id}/edit`} title="Edit" aria-label={`Edit ${clip.title}`} className={cn(iconBtn, "size-[30px]")}>
-          <Pencil className="size-4" />
-        </Link>
+        {!clip.videoUrl && (
+          <Link href={`/clips/${clip.id}/edit`} title="Edit" aria-label={`Edit ${clip.title}`} className={cn(iconBtn, "size-[30px]")}>
+            <Pencil className="size-4" />
+          </Link>
+        )}
       </div>
       <strong className="text-xs leading-snug font-medium">{clip.title}</strong>
     </article>

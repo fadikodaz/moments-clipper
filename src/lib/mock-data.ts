@@ -41,6 +41,9 @@ export type Clip = {
   /** Optional heads-up, e.g. content that may limit ads. */
   warning?: string;
   sub: SubScores;
+  /** Finished short from the engine (real clips only; example clips use drawn placeholders). */
+  videoUrl?: string;
+  posterUrl?: string;
 };
 
 export type ClipLayout = "follow" | "fit" | "split";

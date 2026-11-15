@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ReviewProvider } from "@/components/clips/review-store";
-import { MobileTabBar, Sidebar } from "@/components/shell/sidebar";
-import { Topbar } from "@/components/shell/topbar";
+import { Suspense } from "react";
+import { MobileTabBar, MobileTabBarView, Sidebar, SidebarView } from "@/components/shell/sidebar";
+import { Topbar, TopbarView } from "@/components/shell/topbar";
 import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
@@ -19,13 +20,19 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body>
         <ReviewProvider>
           <div className="flex h-dvh">
-            <Sidebar />
+            <Suspense fallback={<SidebarView pathname="" />}>
+              <Sidebar />
+            </Suspense>
             <div className="flex h-dvh min-w-0 flex-1 flex-col">
-              <Topbar />
+              <Suspense fallback={<TopbarView pathname="" />}>
+                <Topbar />
+              </Suspense>
               <main className="flex-1 overflow-y-auto pb-[58px] sm:pb-0">{children}</main>
             </div>
           </div>
-          <MobileTabBar />
+          <Suspense fallback={<MobileTabBarView pathname="" />}>
+            <MobileTabBar />
+          </Suspense>
         </ReviewProvider>
       </body>
     </html>

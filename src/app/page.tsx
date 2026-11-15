@@ -4,6 +4,7 @@ import { ContinueCard } from "@/components/home/continue-card";
 import { Intake } from "@/components/home/intake";
 import { Makers } from "@/components/home/makers";
 import { RecentProjects } from "@/components/home/recent-projects";
+import { YourVideos } from "@/components/home/your-videos";
 import { projects, topClips, user } from "@/lib/mock-data";
 
 function Block({ title, aside, children }: { title: string; aside?: ReactNode; children: ReactNode }) {
@@ -36,7 +37,9 @@ export default function HomePage() {
 
         <Intake />
 
-        <Block title="Continue">
+        <YourVideos />
+
+        <Block title="Example project" aside={<span className="text-xs text-muted-foreground">Sample data to explore the review screen</span>}>
           <ContinueCard project={current} clips={topClips} />
         </Block>
 
@@ -45,7 +48,7 @@ export default function HomePage() {
         </Block>
 
         <Block
-          title="Recent projects"
+          title="More examples"
           aside={
             <span className="text-xs text-muted-foreground">
               {user.storageUsedGb} of {user.storageLimitGb} GB storage used

@@ -19,7 +19,7 @@ export const NAV: NavGroup[] = [
     label: "Create",
     items: [
       { label: "Home", href: "/", icon: House, mobile: true },
-      { label: "Clips", href: "/clips", icon: GalleryHorizontalEnd, count: 12, mobile: true },
+      { label: "Clips", href: "/clips", icon: GalleryHorizontalEnd, mobile: true },
       { label: "Narration video", short: "Narration", href: "/narration", icon: Film, isNew: true, mobile: true },
     ],
   },
@@ -37,6 +37,7 @@ export const NAV: NavGroup[] = [
 ];
 
 export function isActive(pathname: string, href: string) {
+  if (href === "/clips" && pathname.startsWith("/p/")) return true; // an upload's clips live under /p/<id>
   return href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(href + "/");
 }
 
@@ -49,5 +50,6 @@ const CRUMBS: Record<string, string[]> = {
 
 export function getCrumbs(pathname: string) {
   if (/^\/clips\/[^/]+\/edit$/.test(pathname)) return ["Clips", "Night run downtown", "Edit"];
+  if (pathname.startsWith("/p/")) return ["Clips", "Your upload"];
   return CRUMBS[pathname] ?? ["Home"];
 }

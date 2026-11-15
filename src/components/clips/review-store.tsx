@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
-import { clips as source } from "@/lib/mock-data";
+import { clips as source, type Clip } from "@/lib/mock-data";
 import type { ClipPatch, ReviewClip } from "./types";
 
 /**
@@ -16,8 +16,19 @@ type ReviewStore = {
 
 const Ctx = createContext<ReviewStore | null>(null);
 
-export function ReviewProvider({ children }: { children: ReactNode }) {
-  const [clips, setClips] = useState<ReviewClip[]>(() => source.map((c) => ({ ...c, status: "new", layout: "follow", caption: "bold" })));
+export function ReviewProvider({ children, initial }: { children: ReactNode; initial?: Clip[] }) {
+  const fresh = (c: Clip): ReviewClip => ({ ...c, status: "new", layout: "follow", caption: "bold" });
+  const [clips, setClips] = useState<ReviewClip[]>(() => (initial ?? source).map(fresh));
+  const [seen, setSeen] = useState(initial);
+
+  // New shorts arrive while a job is still running: add them, keep the choices already made.
+  if (initial && initial !== seen) {
+    setSeen(initial);
+    setClips((cs) => {
+      const known = new Set(cs.map((c) => c.id));
+      return [...cs, ...initial.filter((c) => !known.has(c.id)).map(fresh)];
+    });
+  }
 
   const patch = useCallback((id: string, p: ClipPatch) => setClips((cs) => cs.map((c) => (c.id === id ? { ...c, ...p } : c))), []);
   const patchMany = useCallback((ids: Iterable<string>, p: ClipPatch) => {

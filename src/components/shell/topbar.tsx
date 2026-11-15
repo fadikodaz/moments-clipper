@@ -6,7 +6,10 @@ import { Sparkles } from "lucide-react";
 import { getCrumbs } from "./nav";
 
 export function Topbar() {
-  const pathname = usePathname();
+  return <TopbarView pathname={usePathname()} />;
+}
+
+export function TopbarView({ pathname }: { pathname: string }) {
   const crumbs = getCrumbs(pathname);
 
   return (

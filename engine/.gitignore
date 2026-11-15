@@ -1,0 +1,3 @@
+# API keys stay on this PC only
+.env
+__pycache__/

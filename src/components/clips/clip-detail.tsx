@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useId } from "react";
-import { Check, CornerDownLeft, TriangleAlert, X } from "lucide-react";
+import { Check, CornerDownLeft, Download, TriangleAlert, X } from "lucide-react";
 import { CAPTION_STYLES, LAYOUTS, formatDuration, type CaptionStyle, type ClipLayout } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
 import { scoreTier, type ClipPatch, type ReviewClip } from "./types";
@@ -94,11 +94,22 @@ export function ClipInfo({ clip, onPatch, onDecide }: { clip: ReviewClip; onPatc
         >
           {clip.status === "removed" ? "Removed" : "Remove"} <X className="size-3 text-subtle" aria-hidden="true" />
         </button>
-        <Link href={`/clips/${clip.id}/edit`} aria-keyshortcuts="Enter" className="inline-flex h-7 items-center gap-1.5 rounded-md border bg-raised px-2.5 text-xs font-medium hover:bg-hover">
-          Open editor <CornerDownLeft className="size-3 text-subtle" aria-hidden="true" />
-        </Link>
+        {clip.videoUrl ? (
+          <a href={clip.videoUrl} download className="inline-flex h-7 items-center gap-1.5 rounded-md border bg-raised px-2.5 text-xs font-medium hover:bg-hover">
+            <Download className="size-3.5" aria-hidden="true" /> Download
+          </a>
+        ) : (
+          <Link href={`/clips/${clip.id}/edit`} aria-keyshortcuts="Enter" className="inline-flex h-7 items-center gap-1.5 rounded-md border bg-raised px-2.5 text-xs font-medium hover:bg-hover">
+            Open editor <CornerDownLeft className="size-3 text-subtle" aria-hidden="true" />
+          </Link>
+        )}
       </div>
 
+      {clip.videoUrl ? (
+        <p className="text-xs text-subtle">
+          Opening line: <span className="text-foreground">{clip.hook}</span>. Layout and captions are already in the video; changing them comes with the editor.
+        </p>
+      ) : (
       <div className="grid grid-cols-[70px_1fr] items-center gap-2 text-xs text-muted-foreground">
         <label htmlFor={ids.layout}>Layout</label>
         <select id={ids.layout} className={controlClass} value={clip.layout} onChange={(e) => onPatch({ layout: e.target.value as ClipLayout })}>
@@ -119,6 +130,7 @@ export function ClipInfo({ clip, onPatch, onDecide }: { clip: ReviewClip; onPatc
         <label htmlFor={ids.hook}>Opening</label>
         <input id={ids.hook} className={controlClass} value={clip.hook} maxLength={60} onChange={(e) => onPatch({ hook: e.target.value })} />
       </div>
+      )}
 
       <blockquote className="border-l-2 border-border-strong pl-2.5 text-xs text-muted-foreground italic">&ldquo;{clip.words}&rdquo;</blockquote>
 
