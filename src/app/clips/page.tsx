@@ -1,7 +1,9 @@
-import { ComingNext } from "@/components/shell/coming-next";
+import { ClipsInbox } from "@/components/clips/clips-inbox";
+import { projects } from "@/lib/mock-data";
 
 export const metadata = { title: "Clips | Moments" };
 
 export default function ClipsPage() {
-  return <ComingNext title="Clips" body="The clips inbox and editor are the next build step." />;
+  const project = projects.find((p) => p.status === "ready")!;
+  return <ClipsInbox project={project} />;
 }

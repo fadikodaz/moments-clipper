@@ -40,9 +40,14 @@ export function isActive(pathname: string, href: string) {
   return href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(href + "/");
 }
 
-export const CRUMBS: Record<string, string[]> = {
+const CRUMBS: Record<string, string[]> = {
   "/": ["Home"],
-  "/clips": ["Clips"],
+  "/clips": ["Clips", "Night run downtown"],
   "/narration": ["Narration video"],
   "/schedule": ["Schedule"],
 };
+
+export function getCrumbs(pathname: string) {
+  if (/^\/clips\/[^/]+\/edit$/.test(pathname)) return ["Clips", "Night run downtown", "Edit"];
+  return CRUMBS[pathname] ?? ["Home"];
+}

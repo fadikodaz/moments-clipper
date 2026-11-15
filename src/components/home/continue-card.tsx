@@ -1,6 +1,9 @@
+"use client";
+
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { SceneThumb } from "@/components/media/scene-thumb";
+import { useReview } from "@/components/clips/review-store";
 import { TOP_PICK, type Clip, type Project } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
 
@@ -8,6 +11,8 @@ const LIFT = ["", "-translate-y-1.5", "", "-translate-y-1", ""];
 
 export function ContinueCard({ project, clips }: { project: Project; clips: Clip[] }) {
   const topPicks = clips.filter((c) => c.score >= TOP_PICK).length;
+  const { clips: review } = useReview();
+  const left = review.filter((c) => c.status === "new").length;
 
   return (
     <Link
@@ -18,7 +23,7 @@ export function ContinueCard({ project, clips }: { project: Project; clips: Clip
       <span className="grid justify-items-start gap-1">
         <span className="inline-flex items-center gap-[7px] text-xs font-medium text-moment">
           <i className="size-[7px] rounded-full bg-moment shadow-[0_0_0_3px_var(--moment-soft)]" />
-          {project.clips} clips ready to review
+          {!left ? "All clips reviewed" : left === project.clips ? `${left} clips ready to review` : `${left} of ${project.clips} clips left to review`}
         </span>
         <b className="text-xl font-[650] tracking-[-0.025em]">{project.title}</b>
         <small className="max-w-[44ch] text-xs text-muted-foreground">

@@ -3,11 +3,11 @@
 import { Fragment } from "react";
 import { usePathname } from "next/navigation";
 import { Sparkles } from "lucide-react";
-import { CRUMBS } from "./nav";
+import { getCrumbs } from "./nav";
 
 export function Topbar() {
   const pathname = usePathname();
-  const crumbs = CRUMBS[pathname] ?? ["Home"];
+  const crumbs = getCrumbs(pathname);
 
   return (
     <header className="flex h-12 shrink-0 items-center justify-between border-b px-3.5 sm:px-5">

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { ReviewProvider } from "@/components/clips/review-store";
 import { MobileTabBar, Sidebar } from "@/components/shell/sidebar";
 import { Topbar } from "@/components/shell/topbar";
 import "./globals.css";
@@ -16,14 +17,16 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
       <body>
-        <div className="flex h-dvh">
-          <Sidebar />
-          <div className="flex h-dvh min-w-0 flex-1 flex-col">
-            <Topbar />
-            <main className="flex-1 overflow-y-auto pb-[58px] sm:pb-0">{children}</main>
+        <ReviewProvider>
+          <div className="flex h-dvh">
+            <Sidebar />
+            <div className="flex h-dvh min-w-0 flex-1 flex-col">
+              <Topbar />
+              <main className="flex-1 overflow-y-auto pb-[58px] sm:pb-0">{children}</main>
+            </div>
           </div>
-        </div>
-        <MobileTabBar />
+          <MobileTabBar />
+        </ReviewProvider>
       </body>
     </html>
   );
