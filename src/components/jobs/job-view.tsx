@@ -1,45 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, LoaderCircle, TriangleAlert } from "lucide-react";
 import { MomentLine } from "@/components/brand/moment-line";
-import { ClipsInbox } from "@/components/clips/clips-inbox";
-import { ReviewProvider } from "@/components/clips/review-store";
-import type { EngineResult, JobMeta, JobStatus } from "@/lib/jobs";
-import type { Clip, Project, SceneKind } from "@/lib/mock-data";
+import { ShortsView } from "@/components/shorts/shorts-view";
+import type { EngineResult, JobMeta, JobStatus, ReviewMap } from "@/lib/jobs";
 import { cn } from "@/lib/utils";
 
-type JobResponse = { meta: JobMeta; status: JobStatus; result: EngineResult | null };
+type JobResponse = { meta: JobMeta; status: JobStatus; result: EngineResult | null; review: ReviewMap };
 
 const STEPS = ["Reading the audio", "Listening to what you said", "Measuring the action", "Picking the best moments", "Making your shorts"];
-
-function kindFromTags(tags: string[]): SceneKind {
-  if (tags.includes("Police chase")) return "chase";
-  if (tags.includes("Stunt")) return "stunt";
-  if (tags.includes("Funny") || tags.includes("Fail")) return "funny";
-  return "action";
-}
-
-function toClips(id: string, result: EngineResult): Clip[] {
-  return result.clips.map((c, i) => ({
-    id: c.id,
-    title: c.title,
-    kind: kindFromTags(c.tags),
-    score: c.score,
-    startSec: c.startSec,
-    durSec: Math.round(c.durSec),
-    seed: i + 1,
-    tags: c.tags,
-    reason: c.reason,
-    hook: c.hook,
-    words: c.words,
-    sub: c.sub,
-    videoUrl: `/api/jobs/${id}/files/${c.file}`,
-    posterUrl: `/api/jobs/${id}/files/${c.poster}`,
-  }));
-}
-
 function elapsed(from?: number) {
   if (!from) return "";
   const s = Math.max(0, Math.round(Date.now() / 1000 - from));
@@ -76,9 +47,6 @@ export function JobView({ jobId }: { jobId: string }) {
     };
   }, [jobId]);
 
-  const result = job?.result ?? null;
-  const clips = useMemo(() => (result ? toClips(jobId, result) : null), [result, jobId]);
-
   if (missing) {
     return (
       <Centered>
@@ -97,39 +65,31 @@ export function JobView({ jobId }: { jobId: string }) {
     );
   }
 
-  if (clips?.length && job.status.state !== "failed") {
+  const clips = job.result?.clips ?? [];
+  if (clips.length && job.status.state !== "failed") {
     const running = job.status.state !== "done";
-    const project: Project = {
-      id: jobId,
-      title: job.meta.name.replace(/\.[^.]+$/, ""),
-      type: "Gameplay",
-      game: "Your upload",
-      durationSec: job.result!.durationSec,
-      status: "ready",
-      clips: clips.length,
-      kept: 0,
-      updated: "just now",
-      kind: "action",
-      seed: 1,
-    };
     return (
-      <ReviewProvider initial={clips}>
-        {running && (
-          <div className="mx-3.5 mt-4 flex items-center gap-2.5 rounded-lg border bg-panel px-3.5 py-2.5 text-xs sm:mx-7" role="status">
-            <LoaderCircle className="size-3.5 shrink-0 animate-spin text-moment" aria-hidden="true" />
-            <span>
-              <b className="font-medium">
-                {clips.length} of {job.result?.expected ?? "?"} shorts ready.
-              </b>{" "}
-              <span className="text-muted-foreground">The rest appear here as they finish; you can start watching now.</span>
-            </span>
-          </div>
-        )}
-        <ClipsInbox project={project} />
-      </ReviewProvider>
+      <ShortsView
+        jobId={jobId}
+        title={job.meta.name.replace(/\.[^.]+$/, "")}
+        clips={clips}
+        initialReview={job.review}
+        banner={
+          running && (
+            <div className="mb-4 flex items-center gap-2.5 rounded-xl border bg-panel px-3.5 py-2.5 text-[13px]" role="status">
+              <LoaderCircle className="size-4 shrink-0 animate-spin text-moment" aria-hidden="true" />
+              <span>
+                <b className="font-medium">
+                  {clips.length} of {job.result?.expected ?? "?"} shorts ready.
+                </b>{" "}
+                <span className="text-muted-foreground">The rest appear here as they finish; you can start watching now.</span>
+              </span>
+            </div>
+          )
+        }
+      />
     );
   }
-
   const { status, meta } = job;
   const failed = status.state === "failed";
 

@@ -137,6 +137,25 @@ export async function listJobs() {
   return jobs.filter((j) => j !== null).sort((a, b) => b.meta.created - a.meta.created);
 }
 
+/** What the user decided per short: saved (heart) or hidden. Missing means neither. */
+export type ReviewState = "saved" | "hidden";
+export type ReviewMap = Record<string, ReviewState>;
+
+const reviewFile = (id: string) => path.join(jobDir(id), "review.json");
+
+export async function getReview(id: string): Promise<ReviewMap> {
+  if (!isJobId(id)) return {};
+  return (await readJson<ReviewMap>(reviewFile(id))) ?? {};
+}
+
+export async function setReview(id: string, clipId: string, state: ReviewState | null) {
+  const review = await getReview(id);
+  if (state) review[clipId] = state;
+  else delete review[clipId];
+  await writeFile(reviewFile(id), JSON.stringify(review));
+  return review;
+}
+
 /** Resolve a file name inside a job's output folder, refusing anything that could escape it. */
 export function outputFile(id: string, file: string) {
   if (!isJobId(id) || !/^[\w.-]+\.(mp4|jpg)$/.test(file)) return null;
