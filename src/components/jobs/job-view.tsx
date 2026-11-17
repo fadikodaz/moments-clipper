@@ -124,7 +124,8 @@ export function JobView({ jobId }: { jobId: string }) {
       )}
 
       <ol className="mt-6 grid gap-2.5">
-        {STEPS.map((label, i) => {
+        {STEPS.map((step, i) => {
+          const label = i === 0 && meta.source === "youtube" ? "Getting the audio from YouTube" : step;
           const n = i + 1;
           const done = status.step > n || status.state === "done";
           const active = status.step === n && !failed;

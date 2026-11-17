@@ -2,30 +2,17 @@
 
 import { useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { FileVideo, HardDrive, Link2, Upload } from "lucide-react";
+import { FileVideo, HardDrive, Link2, LoaderCircle, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-const ACCEPTED_HOSTS = ["twitch.tv", "kick.com", "youtube.com", "youtu.be"];
-
 type Notice = { tone: "ok" | "error"; text: string } | null;
+type LinkInfo = { url: string; title: string; channel: string; durationSec: number; thumbnail: string | null };
 
-function checkLink(raw: string): Notice {
-  const value = raw.trim();
-  if (!value) return { tone: "error", text: "Paste a Twitch, Kick or YouTube link first." };
-  let url: URL;
-  try {
-    url = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`);
-  } catch {
-    return { tone: "error", text: "That doesn't look like a link." };
-  }
-  const host = url.hostname.replace(/^www\./, "");
-  if (!ACCEPTED_HOSTS.some((h) => host === h || host.endsWith(`.${h}`))) {
-    return { tone: "error", text: "We support Twitch, Kick and YouTube links for now." };
-  }
-  return { tone: "ok", text: `Link looks good (${host}). Pasting links comes in a later step; for now, drop the video file above.` };
+function hhmmss(sec: number) {
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  return h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
 }
-
 export function Intake() {
   const fileRef = useRef<HTMLInputElement>(null);
   const linkId = useId();
@@ -34,6 +21,27 @@ export function Intake() {
   const [notice, setNotice] = useState<Notice>(null);
 
   const [picked, setPicked] = useState<File | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [linkInfo, setLinkInfo] = useState<LinkInfo | null>(null);
+
+  async function checkLink() {
+    if (!link.trim()) return setNotice({ tone: "error", text: "Paste a YouTube link first." });
+    setChecking(true);
+    setNotice(null);
+    try {
+      const r = await fetch(`/api/link?url=${encodeURIComponent(link.trim())}`);
+      const body = await r.json();
+      if (!r.ok) setNotice({ tone: "error", text: body.error ?? "Couldn't read this link." });
+      else {
+        setPicked(null);
+        setLinkInfo(body as LinkInfo);
+      }
+    } catch {
+      setNotice({ tone: "error", text: "Couldn't reach the app. Is it still running?" });
+    } finally {
+      setChecking(false);
+    }
+  }
 
   function takeFiles(list: FileList | null) {
     const files = Array.from(list ?? []).filter((f) => /\.(mp4|mov|mkv|webm)$/i.test(f.name));
@@ -42,6 +50,7 @@ export function Intake() {
       return;
     }
     setNotice(files.length > 1 ? { tone: "ok", text: "Joining several files comes later, so only the first one is used for now." } : null);
+    setLinkInfo(null);
     setPicked(files[0]);
   }
 
@@ -50,10 +59,12 @@ export function Intake() {
       className="grid gap-1 rounded-xl border bg-panel p-2"
       onSubmit={(e) => {
         e.preventDefault();
-        setNotice(checkLink(link));
+        if (!checking) checkLink();
       }}
     >
-      {picked ? (
+      {linkInfo ? (
+        <LinkPanel info={linkInfo} onCancel={() => setLinkInfo(null)} />
+      ) : picked ? (
         <UploadPanel file={picked} onCancel={() => setPicked(null)} />
       ) : (
       <label
@@ -104,14 +115,16 @@ export function Intake() {
           id={linkId}
           value={link}
           onChange={(e) => setLink(e.target.value)}
-          placeholder="twitch.tv/videos/…  or  kick.com/…"
+          placeholder="Paste a YouTube link: youtube.com/watch?v=…"
           autoComplete="off"
           className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-subtle"
         />
-        <Button type="submit" size="lg" className="h-[34px] px-4 text-[13px] font-semibold">
-          Get clips
+        <Button type="submit" size="lg" disabled={checking} className="h-[34px] px-4 text-[13px] font-semibold">
+          {checking ? "Checking…" : "Get clips"}
         </Button>
       </div>
+
+      <p className="px-2.5 pt-1.5 text-[11px] text-subtle">YouTube links work now; Twitch and Kick are next. Only clip videos you own or have permission to use.</p>
 
       {notice && (
         <p role="status" className={cn("px-2.5 pt-1.5 text-xs", notice.tone === "ok" ? "text-good" : "text-bad")}>
@@ -234,6 +247,66 @@ function UploadPanel({ file, onCancel }: { file: File; onCancel: () => void }) {
           Cancel upload
         </button>
       )}
+      {error && <p role="alert" className="text-xs text-bad">{error}</p>}
+    </div>
+  );
+}
+/** A checked YouTube link: confirm what we found, choose the facecam corner, start. */
+function LinkPanel({ info, onCancel }: { info: LinkInfo; onCancel: () => void }) {
+  const router = useRouter();
+  const layoutId = useId();
+  const [layout, setLayout] = useState("top-right");
+  const [starting, setStarting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function start() {
+    setStarting(true);
+    setError(null);
+    try {
+      const r = await fetch("/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: info.url, layout, title: info.title, thumbnail: info.thumbnail }) });
+      const body = await r.json();
+      if (r.status === 201 && body.id) return router.push(`/p/${body.id}`);
+      setError(body.error ?? "Couldn't start.");
+    } catch {
+      setError("Couldn't reach the app. Is it still running?");
+    }
+    setStarting(false);
+  }
+
+  return (
+    <div className="grid gap-3 rounded-lg border border-border-strong p-3.5 sm:p-[18px]">
+      <div className="flex items-center gap-3.5">
+        <span className="relative block aspect-video w-[120px] shrink-0 overflow-hidden rounded-lg bg-raised">
+          {/* eslint-disable-next-line @next/next/no-img-element -- YouTube thumbnail, shown as-is */}
+          {info.thumbnail && <img src={info.thumbnail} alt="" className="h-full w-full object-cover" />}
+          <span className="absolute right-1 bottom-1 rounded bg-background/85 px-1 font-mono text-[11px]">{hhmmss(info.durationSec)}</span>
+        </span>
+        <span className="min-w-0">
+          <b className="line-clamp-2 text-sm font-semibold">{info.title}</b>
+          <small className="text-xs text-subtle">{info.channel ? `${info.channel} on YouTube` : "YouTube"}</small>
+        </span>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <label htmlFor={layoutId} className="sr-only">
+          Where is the facecam?
+        </label>
+        <select id={layoutId} value={layout} onChange={(e) => setLayout(e.target.value)} disabled={starting} className="h-[34px] rounded-md border bg-panel px-2.5 text-xs outline-none hover:border-border-strong">
+          {FACECAM.map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.name}
+            </option>
+          ))}
+        </select>
+        <span className="flex-1" />
+        <Button type="button" variant="ghost" size="lg" onClick={onCancel} disabled={starting} className="h-[34px] text-[13px] text-muted-foreground">
+          Cancel
+        </Button>
+        <Button type="button" size="lg" onClick={start} disabled={starting} className="h-[34px] px-4 text-[13px] font-semibold">
+          {starting ? <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> : null}
+          {starting ? "Starting" : "Get clips"}
+        </Button>
+      </div>
+      <p className="text-[11px] text-subtle">We fetch only the audio first, then just the seconds we turn into shorts, so the full video is never downloaded.</p>
       {error && <p role="alert" className="text-xs text-bad">{error}</p>}
     </div>
   );

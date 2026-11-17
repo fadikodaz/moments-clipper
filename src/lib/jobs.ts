@@ -16,7 +16,17 @@ import type { ReadableStream as WebReadableStream } from "node:stream/web";
 export const LAYOUTS = ["top-right", "top-left", "bottom-right", "bottom-left", "none"] as const;
 export type FacecamLayout = (typeof LAYOUTS)[number];
 
-export type JobMeta = { id: string; name: string; layout: FacecamLayout; bytes: number; created: number };
+export type JobMeta = {
+  id: string;
+  name: string;
+  layout: FacecamLayout;
+  bytes: number;
+  created: number;
+  /** Where the video came from; links are fetched by the engine itself. */
+  source?: "upload" | "youtube";
+  url?: string;
+  thumbnail?: string | null;
+};
 export type JobStatus = {
   state: "queued" | "running" | "done" | "failed";
   step: number;
@@ -95,7 +105,16 @@ export async function saveUpload(id: string, body: ReadableStream<Uint8Array>, n
   return { meta, source: target };
 }
 
-/** Start the Python engine in the background; it keeps running if the page is closed. */
+/** A job for a pasted link: nothing to upload, the engine fetches what it needs. */
+export async function createLinkJob(id: string, link: { url: string; title: string; thumbnail: string | null }, layout: FacecamLayout) {
+  await mkdir(outDir(id), { recursive: true });
+  const meta: JobMeta = { id, name: link.title, layout, bytes: 0, created: Date.now(), source: "youtube", url: link.url, thumbnail: link.thumbnail };
+  await writeFile(path.join(jobDir(id), "meta.json"), JSON.stringify(meta));
+  await writeFile(path.join(outDir(id), "status.json"), JSON.stringify({ state: "queued", step: 0, steps: 5, label: "Waiting to start", detail: "", progress: 0, error: null } satisfies JobStatus));
+  return meta;
+}
+
+/** Start the Python engine in the background; it keeps running if the page is closed. Source is a file path or a link. */
 export function startEngine(id: string, source: string, layout: FacecamLayout) {
   const log = openSync(path.join(jobDir(id), "engine.log"), "a");
   const child = spawn(/*turbopackIgnore: true*/ process.env.PYTHON ?? "python", [ENGINE, source, "--out", outDir(id), "--layout", layout], {

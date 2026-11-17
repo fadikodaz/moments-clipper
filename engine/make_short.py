@@ -159,9 +159,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     path.write_text(head + "\n".join(lines) + "\n", encoding="utf-8")
 
 
-def render_short(video: Path, start: float, length: float, out_dir: Path, name: str, key: str, transcript: dict,
-                 hook: str | None = None, layout: str = "top-right") -> dict:
-    """Make one finished short. Returns the caption words and timings."""
+def render_short(video: Path | None, start: float, length: float, out_dir: Path, name: str, key: str, transcript: dict,
+                 hook: str | None = None, layout: str = "top-right", remote: dict | None = None) -> dict:
+    """Make one finished short. Returns the caption words and timings.
+
+    remote: direct stream addresses from fetch.remote_source(); FFmpeg then reads only this
+    short's seconds from the server instead of a local file.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     timings = {}
     words = [w for w in transcript["words"] if start <= w["start"] < start + length]
@@ -177,10 +181,21 @@ def render_short(video: Path, start: float, length: float, out_dir: Path, name: 
 
     t = time.perf_counter()
     # Run from the output folder so the subtitles filter gets a plain file name (Windows drive colons break it).
-    vf = f"{layout_filter(*video_size(video), layout)};[v0]setsar=1,subtitles={ass.name}[v]"
+    if remote:
+        net = ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5", "-headers", remote["headers"]]
+        inputs = ["-ss", str(start), *net, "-i", remote["video"]]
+        audio = "0:a"
+        if remote.get("audio"):
+            inputs += ["-ss", str(start), *net, "-i", remote["audio"]]
+            audio = "1:a"
+        size = (remote["width"], remote["height"])
+    else:
+        assert video is not None
+        inputs, audio, size = ["-ss", str(start), "-i", str(video)], "0:a", video_size(video)
+    vf = f"{layout_filter(*size, layout)};[v0]setsar=1,subtitles={ass.name}[v]"
     r = subprocess.run(
-        ["ffmpeg", "-y", "-v", "error", "-ss", str(start), "-i", str(video), "-t", str(length),
-         "-filter_complex", vf, "-map", "[v]", "-map", "0:a",
+        ["ffmpeg", "-y", "-v", "error", *inputs, "-t", str(length),
+         "-filter_complex", vf, "-map", "[v]", "-map", audio,
          *encoder_args(), "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", f"{name}.mp4"],
         cwd=out_dir, capture_output=True, text=True,
     )
