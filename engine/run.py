@@ -79,7 +79,8 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status) -> No
             raise FetchError("Videos up to 4 hours are supported for now.")
         title = meta.get("title") or "YouTube video"
         video = download_audio(source, job_dir / "source_audio",
-                               lambda f: status.write("running", 1, f * 0.95, f"Downloading the audio from YouTube, {round(f * 100)}%"))
+                               lambda f: status.write("running", 1, f * 0.95, f"Downloading the audio from YouTube, {round(f * 100)}%"),
+                               lambda n, m: status.write("running", 1, 0, f"YouTube refused, trying again ({n} of {m})"))
     else:
         video = Path(source).resolve()
         title = video.name
