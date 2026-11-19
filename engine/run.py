@@ -26,6 +26,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from make_short import LAYOUTS, render_short, roman_line
+from facecam import find_facecam
 from fetch import FetchError, download_audio, download_video, info, is_url, remote_source
 from pick import pick
 from signals import extract_audio, fmt, loudness_per_second
@@ -52,9 +53,20 @@ class Status:
         data = {"state": state, "step": step, "steps": len(self.weights), "label": LABELS.get(step, ""), "detail": detail,
                 "progress": 1.0 if state == "done" else round(done, 3), "started": self.started, "updated": time.time(), "error": error}
         with self.lock:
+            # Throttle tiny progress updates (downloads report many per second).
+            if state == "running" and step == getattr(self, "_last_step", None) and time.time() - getattr(self, "_last_t", 0) < 0.5:
+                return
+            self._last_step, self._last_t = step, time.time()
             tmp = self.path.with_suffix(".tmp")
             tmp.write_text(json.dumps(data), encoding="utf-8")
-            os.replace(tmp, self.path)
+            # On Windows the file can be locked for a moment while the website or antivirus reads it.
+            for _ in range(20):
+                try:
+                    os.replace(tmp, self.path)
+                    return
+                except PermissionError:
+                    time.sleep(0.05)
+            print("    could not update status.json (file busy); continuing", flush=True)
 
 
 def slug(text: str) -> str:
@@ -103,10 +115,10 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status) -> No
     loud = loudness_per_second(wav)
     timings["3_measure"] = time.perf_counter() - t
 
-    status.write("running", 4, 0, "Finding candidates")
+    status.write("running", 4, 0, "Reading what you said")
     t = time.perf_counter()
     picks = pick(video, key, transcript, loud, top=top,
-                 on_batch=lambda i, n: status.write("running", 4, i / n, f"Checked {i * 3} of {n * 3} moments"))["picks"]
+                 on_batch=lambda i, n: status.write("running", 4, i / n, f"Read part {i} of {n}"))["picks"]
     timings["4_pick"] = time.perf_counter() - t
     if not picks:
         raise RuntimeError("No moments were good enough to post. Try a longer recording with more action or talking.")
@@ -129,11 +141,16 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status) -> No
     def save(final: bool) -> None:
         """Written after every finished short, so the website can show them one by one."""
         clips = sorted(ready, key=lambda c: c["rank"])
-        summary = {"video": title, "duration": fmt(len(loud)), "durationSec": len(loud), "layout": layout,
+        summary = {"video": title, "duration": fmt(len(loud)), "durationSec": len(loud), "layout": layout, "facecam": box,
                    "expected": len(picks), "complete": final, "timings_s": {k: round(v, 1) for k, v in timings.items()}, "clips": clips}
         tmp = out_dir / "clips.tmp"
         tmp.write_text(json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
-        os.replace(tmp, out_dir / "clips.json")
+        for _ in range(20):
+            try:
+                os.replace(tmp, out_dir / "clips.json")
+                break
+            except PermissionError:
+                time.sleep(0.05)
 
     status.write("running", 5, 0, f"0 of {len(picks)} ready")
     t = time.perf_counter()
@@ -146,13 +163,29 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status) -> No
         except FetchError as e:
             print(f"    direct cutting unavailable: {e}", flush=True)
 
+    # Find the facecam once, from frames spread over the whole video.
+    box = None
+    if layout != "none":
+        status.write("running", 5, 0, "Finding your facecam")
+        if mode["remote"]:
+            rs = mode["remote"]
+            input_for = lambda t: ["-ss", str(t), "-headers", rs["headers"], "-i", rs["video"]]
+        else:
+            src = mode["video"] if mode["video"] else video
+            input_for = lambda t: ["-ss", str(t), "-i", str(src)]
+        try:
+            box = find_facecam(len(loud), input_for, layout)
+        except Exception as e:  # detection is a nice-to-have; the default box still works
+            print(f"    facecam detection failed: {e}", flush=True)
+        print(f"    facecam: {box or 'not found, using the default corner box'}", flush=True)
+
     def make(p: dict) -> bool:
         nonlocal failed
         name = f"{p['rank']:02d}_{slug(p.get('title', 'clip'))}"
         res = None
         for attempt in (1, 2):  # one retry: a single failed cut should not cost the whole job
             try:
-                res = render_short(mode["video"], p["start"], p["end"] - p["start"], out_dir, name, key, transcript, p.get("hook"), layout, mode["remote"])
+                res = render_short(mode["video"], p["start"], p["end"] - p["start"], out_dir, name, key, transcript, p.get("hook"), layout, mode["remote"], box)
                 break
             except RuntimeError as e:
                 print(f"    #{p['rank']} attempt {attempt} failed: {str(e)[:300]}", flush=True)

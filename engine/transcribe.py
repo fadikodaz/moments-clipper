@@ -24,6 +24,9 @@ import requests
 API_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
 CHUNK_SEC = 600
 PARALLEL = 4  # pieces sent at the same time
+# Telling Whisper the language and the kind of talk cuts mishearings a lot for Hinglish gaming streams.
+LANGUAGE = "hi"
+PROMPT = "Hindi gaming stream with English words: bhai, guys, yaar, GTA, car, bike, police, race, jump, game, stream, chat, subscribe, okay, come on, let's go."
 
 
 def load_key() -> str:
@@ -58,7 +61,7 @@ def transcribe_chunk(key: str, path: Path, model: str) -> dict:
                 API_URL,
                 headers={"Authorization": f"Bearer {key}"},
                 files={"file": (path.name, f, "audio/mpeg")},
-                data=[("model", model), ("response_format", "verbose_json"), ("timestamp_granularities[]", "word"), ("timestamp_granularities[]", "segment")],
+                data=[("model", model), ("language", LANGUAGE), ("prompt", PROMPT), ("response_format", "verbose_json"), ("timestamp_granularities[]", "word"), ("timestamp_granularities[]", "segment")],
                 timeout=300,
             )
         if r.status_code == 429:  # rate limit on the free tier: wait and retry

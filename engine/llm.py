@@ -11,7 +11,8 @@ MODEL = "openai/gpt-oss-120b"
 
 
 def chat_json(key: str, messages: list[dict], reasoning: str = "medium", temperature: float = 0.2) -> dict:
-    for _ in range(10):
+    bad_json = 0
+    for _ in range(12):
         r = requests.post(
             CHAT_URL,
             headers={"Authorization": f"Bearer {key}"},
@@ -26,6 +27,14 @@ def chat_json(key: str, messages: list[dict], reasoning: str = "medium", tempera
             continue
         if r.status_code >= 500:
             time.sleep(5)
+            continue
+        if r.status_code == 400 and "json_validate_failed" in r.text:
+            # The model sometimes produces empty or broken JSON; asking again usually works.
+            bad_json += 1
+            if bad_json >= 3:
+                print("    AI gave no usable answer 3 times; skipping this part", flush=True)
+                return {}
+            time.sleep(2)
             continue
         if r.status_code != 200:
             sys.exit(f"Groq error {r.status_code}: {r.text[:400]}")
