@@ -24,7 +24,7 @@ from transcribe import load_key
 # Facecam box as a share of the source frame (measured on a typical streamer overlay).
 # Finding the facecam automatically comes later; for now the uploader picks the corner.
 CAM_W, CAM_H, CAM_MARGIN = 0.197, 0.222, 0.008
-LAYOUTS = ("top-right", "top-left", "bottom-right", "bottom-left", "none")
+LAYOUTS = ("auto", "top-right", "top-left", "bottom-right", "bottom-left", "none")
 CAPTION_Y = 1300   # pixels from top of the 1080x1920 frame: upper part of the gameplay area
 HOOK_Y = 600       # the opening line sits on the seam between facecam and gameplay
 HOOK_SECONDS = 3.5
@@ -60,15 +60,17 @@ def encoder_args() -> list[str]:
     return _ENCODER
 
 
-def layout_filter(width: int, height: int, layout: str, box: dict | None = None) -> str:
-    """FFmpeg filter that turns a wide frame into a vertical frame named [v0].
+def layout_filter(width: int, height: int, layout: str, box: dict | None = None) -> tuple[str, int]:
+    """FFmpeg filter that turns a wide frame into a vertical frame named [v0], plus the facecam height
+    in the output (0 when there is none), so covers can be cut from the gameplay part only.
 
+    layout: "auto" (use the detected box, gameplay only if none was found), a corner name, or "none".
     box: detected facecam as fractions of the frame (facecam.py); without it a default corner box is used.
     """
     ow, oh = output_size(height)
     game_w = min(width, even(height * 9 / 16))
-    if layout == "none":
-        return f"[0:v]crop={game_w}:{height}:{(width - game_w) // 2}:0,scale={ow}:{oh}:flags=lanczos[v0]"
+    if layout == "none" or (layout == "auto" and not box):
+        return f"[0:v]crop={game_w}:{height}:{(width - game_w) // 2}:0,scale={ow}:{oh}:flags=lanczos[v0]", 0
     if box:
         cw, ch = even(width * box["w"]), even(height * box["h"])
         cx = min(width - cw, max(0, int(width * box["x"])))
@@ -83,7 +85,7 @@ def layout_filter(width: int, height: int, layout: str, box: dict | None = None)
     split_w = min(width, even(height * ow / game_h))
     return (f"[0:v]split=2[a][b];[a]crop={cw}:{ch}:{cx}:{cy},scale={ow}:{cam_h}:flags=lanczos[cam];"
             f"[b]crop={split_w}:{height}:{(width - split_w) // 2}:0,scale={ow}:{game_h}:flags=lanczos[game];"
-            f"[cam][game]vstack=inputs=2[v0]")
+            f"[cam][game]vstack=inputs=2[v0]"), cam_h
 WORDS_PER_SCREEN = 4
 DEVANAGARI = re.compile(r"[\u0900-\u097F]")
 
@@ -143,7 +145,8 @@ def clean(text: str) -> str:
     return text.replace("{", "").replace("}", "").replace("\\", "")
 
 
-def build_ass(words: list[dict], path: Path, hook: str | None = None) -> None:
+def build_ass(words: list[dict], path: Path, hook: str | None = None, captions: str = "bold") -> None:
+    """captions: "bold" (big, word by word, spoken word in orange), "simple" (plain phrase in a box) or "none"."""
     head = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
@@ -153,12 +156,21 @@ WrapStyle: 0
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Cap,Arial Black,76,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,7,3,8,60,60,{CAPTION_Y},1
+Style: Simple,Arial,60,&H00FFFFFF,&H00FFFFFF,&H00000000,&H99000000,-1,0,0,0,100,100,0,0,3,14,0,8,80,80,{CAPTION_Y},1
 Style: Hook,Arial Black,70,&H00000000,&H00000000,&H00FFFFFF,&H00FFFFFF,-1,0,0,0,100,100,0,0,3,18,0,8,90,90,{HOOK_Y},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     events = []  # (start, end, text)
+    if captions == "none":
+        words = []
+    if captions == "simple":
+        for g in range(0, len(words), WORDS_PER_SCREEN + 2):
+            group = words[g: g + WORDS_PER_SCREEN + 2]
+            nxt = words[g + WORDS_PER_SCREEN + 2]["start"] if g + WORDS_PER_SCREEN + 2 < len(words) else group[-1]["end"] + 0.4
+            events.append((group[0]["start"], min(nxt, group[-1]["end"] + 0.8), clean(" ".join(x["text"] for x in group))))
+        words = []
     for g in range(0, len(words), WORDS_PER_SCREEN):
         group = words[g: g + WORDS_PER_SCREEN]
         for k, w in enumerate(group):
@@ -179,14 +191,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             e = min(e, events[i + 1][0])
         if e - s < 0.05:
             continue
-        lines.append(f"Dialogue: 0,{ass_time(s)},{ass_time(e)},Cap,,0,0,0,,{text}")
+        lines.append(f"Dialogue: 0,{ass_time(s)},{ass_time(e)},{'Simple' if captions == 'simple' else 'Cap'},,0,0,0,,{text}")
     if hook:
         lines.append(f"Dialogue: 1,{ass_time(0)},{ass_time(HOOK_SECONDS)},Hook,,0,0,0,,{clean(hook)}")
     path.write_text(head + "\n".join(lines) + "\n", encoding="utf-8")
 
 
 def render_short(video: Path | None, start: float, length: float, out_dir: Path, name: str, key: str, transcript: dict,
-                 hook: str | None = None, layout: str = "top-right", remote: dict | None = None, box: dict | None = None) -> dict:
+                 hook: str | None = None, layout: str = "top-right", remote: dict | None = None, box: dict | None = None,
+                 captions: str = "bold") -> dict:
     """Make one finished short. Returns the caption words and timings.
 
     remote: direct stream addresses from fetch.remote_source(); FFmpeg then reads only this
@@ -203,7 +216,7 @@ def render_short(video: Path | None, start: float, length: float, out_dir: Path,
     clip_words = [{"text": r, "start": round(w["start"] - start, 2), "end": round(w["end"] - start, 2)} for w, r in zip(words, roman)]
 
     ass = out_dir / f"{name}.ass"
-    build_ass(clip_words, ass, hook)
+    build_ass(clip_words, ass, hook, captions)
 
     t = time.perf_counter()
     # Run from the output folder so the subtitles filter gets a plain file name (Windows drive colons break it).
@@ -218,19 +231,25 @@ def render_short(video: Path | None, start: float, length: float, out_dir: Path,
     else:
         assert video is not None
         inputs, audio, size = ["-ss", str(start), "-i", str(video)], "0:a", video_size(video)
-    vf = f"{layout_filter(*size, layout, box)};[v0]setsar=1,subtitles={ass.name}[v]"
+    lf, cam_h = layout_filter(*size, layout, box)
+    # One pass, two outputs: the short with captions, and a clean cover frame of the gameplay part
+    # (taken after the opening line, before captions are burned in).
+    at = round(min(HOOK_SECONDS + 1.5, length * 0.5), 2)
+    vf = (f"{lf};[v0]setsar=1,split=2[m][p];[m]subtitles={ass.name}[v];"
+          f"[p]select='gte(t\\,{at})',crop=iw:ih-{cam_h}:0:{cam_h},scale=480:-2[pv]")
     r = subprocess.run(
-        ["ffmpeg", "-y", "-v", "error", *inputs, "-t", str(length),
-         "-filter_complex", vf, "-map", "[v]", "-map", audio,
-         *encoder_args(), "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", f"{name}.mp4"],
+        ["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", vf,
+         "-t", str(length), "-map", "[v]", "-map", audio,
+         *encoder_args(), "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", f"{name}.mp4",
+         "-map", "[pv]", "-frames:v", "1", "-update", "1", "-q:v", "3", f"{name}.jpg"],
         cwd=out_dir, capture_output=True, text=True,
     )
     if r.returncode:
         raise RuntimeError(f"FFmpeg failed for {name} (exit code {r.returncode}):\n{r.stderr[-1500:]}")
     timings["render_s"] = round(time.perf_counter() - t, 1)
-    # Small poster image for lists and thumbnails, taken after the opening line has gone.
-    subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", str(min(HOOK_SECONDS + 0.5, length / 2)), "-i", f"{name}.mp4", "-frames:v", "1", "-vf", "scale=360:-2", "-q:v", "4", f"{name}.jpg"],
-                   cwd=out_dir, capture_output=True)
+    if not (out_dir / f"{name}.jpg").exists():  # fallback cover from the finished short
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", str(at), "-i", f"{name}.mp4", "-frames:v", "1", "-vf", "scale=360:-2", "-q:v", "4", f"{name}.jpg"],
+                       cwd=out_dir, capture_output=True)
     return {"file": f"{name}.mp4", "poster": f"{name}.jpg", "hook": hook, "words": clip_words, "timings": timings}
 
 
@@ -241,7 +260,7 @@ def main() -> None:
     ap.add_argument("length", type=float)
     ap.add_argument("--name", default="clip")
     ap.add_argument("--hook")
-    ap.add_argument("--layout", choices=LAYOUTS, default="top-right")
+    ap.add_argument("--layout", choices=LAYOUTS, default="auto")
     a = ap.parse_args()
     video = a.video.resolve()
     transcript = json.loads((video.parent / "signals" / f"{video.stem}.transcript.json").read_text(encoding="utf-8"))

@@ -1,63 +1,37 @@
-import type { ReactNode } from "react";
-import { MomentLine } from "@/components/brand/moment-line";
-import { ContinueCard } from "@/components/home/continue-card";
+import Link from "next/link";
 import { Intake } from "@/components/home/intake";
-import { Makers } from "@/components/home/makers";
-import { RecentProjects } from "@/components/home/recent-projects";
-import { YourVideos } from "@/components/home/your-videos";
-import { projects, topClips, user } from "@/lib/mock-data";
+import { ProjectGrid } from "@/components/jobs/project-grid";
 
-function Block({ title, aside, children }: { title: string; aside?: ReactNode; children: ReactNode }) {
-  return (
-    <section className="mt-[30px]">
-      <div className="mb-2.5 flex items-baseline justify-between">
-        <h2 className="text-sm font-semibold tracking-[-0.01em]">{title}</h2>
-        {aside}
-      </div>
-      {children}
-    </section>
-  );
-}
+const STEPS = ["We find the best moments", "We cut them vertical with captions", "You download or post"];
 
 export default function HomePage() {
-  const current = projects.find((p) => p.status === "ready")!;
-
   return (
-    <div className="px-3.5 pt-[18px] pb-8 sm:px-7 sm:pt-[34px] sm:pb-12">
-      <div className="mx-auto max-w-[1040px]">
-        <header className="mb-[22px]">
-          <p className="mb-1.5 text-muted-foreground">Welcome back, {user.name}</p>
-          <h1 className="text-[clamp(30px,3.6vw,44px)] leading-[1.04] font-[650] tracking-[-0.045em]">
-            Find the moments
-            <br />
-            worth posting.
-          </h1>
-          <MomentLine className="mt-3.5" />
-        </header>
+    <div className="mx-auto max-w-[1180px] px-3.5 pt-[18px] pb-[130px] md:px-8 md:pt-8 md:pb-[120px]">
+      <section className="mx-auto mt-7 max-w-[780px] text-center">
+        <h1 className="text-[clamp(30px,4vw,46px)] leading-[1.05] font-[650] tracking-[-0.045em]">Turn a long stream into shorts.</h1>
+        <p className="mx-auto mt-3 max-w-[52ch] text-base text-muted-foreground">
+          Paste a YouTube link or drop a recording. You get ready-to-post vertical shorts with captions in about 5 minutes.
+        </p>
+      </section>
 
-        <Intake />
+      <Intake />
 
-        <YourVideos />
+      <ol aria-label="How it works" className="mx-auto mt-[22px] flex flex-wrap justify-center gap-x-7 gap-y-2 text-[13px] text-muted-foreground">
+        {STEPS.map((s, i) => (
+          <li key={s} className="inline-flex items-center gap-2">
+            <i className="grid size-[22px] place-items-center rounded-full bg-raised font-mono text-[11px] font-semibold text-foreground not-italic">{i + 1}</i>
+            {s}
+          </li>
+        ))}
+      </ol>
 
-        <Block title="Example project" aside={<span className="text-xs text-muted-foreground">Sample data to explore the review screen</span>}>
-          <ContinueCard project={current} clips={topClips} />
-        </Block>
-
-        <Block title="Make something">
-          <Makers />
-        </Block>
-
-        <Block
-          title="More examples"
-          aside={
-            <span className="text-xs text-muted-foreground">
-              {user.storageUsedGb} of {user.storageLimitGb} GB storage used
-            </span>
-          }
-        >
-          <RecentProjects projects={projects} />
-        </Block>
+      <div className="mt-14 mb-3.5 flex items-baseline justify-between">
+        <h2 className="text-lg font-semibold tracking-[-0.02em]">Your projects</h2>
+        <Link href="/projects" className="text-[13px] text-muted-foreground hover:text-foreground">
+          View all
+        </Link>
       </div>
+      <ProjectGrid limit={6} empty={<p className="text-muted-foreground">Your projects show up here. Paste a link above to make your first shorts.</p>} />
     </div>
   );
 }

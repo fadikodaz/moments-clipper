@@ -1,12 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import type { JobStatus } from "@/lib/jobs";
+import { useCallback, useEffect, useState } from "react";
+import type { JobMeta, JobStatus } from "@/lib/jobs";
 
-export type JobSummary = {
-  id: string;
-  name: string;
-  created: number;
+export type JobSummary = JobMeta & {
   status: JobStatus;
   clips: number;
   durationSec: number | null;
@@ -14,9 +11,12 @@ export type JobSummary = {
   cover: string | null;
 };
 
-/** Uploads on this computer. Refreshes every few seconds while one is still being processed. */
+const busy = (j: JobSummary) => j.status.state === "running" || j.status.state === "queued";
+
+/** Projects on this computer. Refreshes every few seconds while one is still being made. */
 export function useJobs() {
   const [jobs, setJobs] = useState<JobSummary[] | null>(null);
+  const [round, setRound] = useState(0);
 
   useEffect(() => {
     let stop = false;
@@ -26,7 +26,7 @@ export function useJobs() {
         const data = (await (await fetch("/api/jobs", { cache: "no-store" })).json()) as JobSummary[];
         if (stop) return;
         setJobs(data);
-        if (data.some((j) => j.status.state === "running" || j.status.state === "queued")) timer = window.setTimeout(load, 3000);
+        if (data.some(busy)) timer = window.setTimeout(load, 3000);
       } catch {
         if (!stop) setJobs((j) => j ?? []);
       }
@@ -36,7 +36,8 @@ export function useJobs() {
       stop = true;
       window.clearTimeout(timer);
     };
-  }, []);
+  }, [round]);
 
-  return jobs;
+  const reload = useCallback(() => setRound((n) => n + 1), []);
+  return { jobs, setJobs, reload };
 }

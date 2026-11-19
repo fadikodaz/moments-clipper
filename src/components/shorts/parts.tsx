@@ -1,65 +1,44 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Download, Ellipsis, Eye, EyeOff, Heart } from "lucide-react";
+import { useRef, useState } from "react";
+import { Check, Copy, Download, Ellipsis, Eye, EyeOff, Scissors, Trash2 } from "lucide-react";
+import { Menu, MenuItem, Score, formatTime } from "@/components/kit";
 import { cn } from "@/lib/utils";
-import { formatTime, scoreLabel, type Short } from "./model";
+import type { Short } from "./model";
 
-export function ScoreBadge({ score, best, solid, className }: { score: number; best: number; solid?: boolean; className?: string }) {
-  const { label, top } = scoreLabel(score, best);
+const roundBtn =
+  "group/ib relative grid size-[34px] place-items-center rounded-full bg-[#f4f4f5]/95 text-[#111] transition-[transform,background-color] hover:scale-108 hover:bg-white [@media(hover:hover)]:size-[38px] [&_svg]:size-[17px]";
+
+function Tip({ children }: { children: string }) {
   return (
-    <span
-      className={cn(
-        "inline-flex items-baseline gap-1.5 rounded-full px-2.5 py-0.5 text-[13px] whitespace-nowrap",
-        top ? (solid ? "bg-moment text-moment-ink" : "bg-moment-soft text-moment") : solid ? "bg-background/80 text-muted-foreground backdrop-blur-sm" : "bg-raised text-muted-foreground",
-        className,
-      )}
-    >
-      <b className={cn("font-mono text-sm font-semibold", top ? "" : "text-foreground")}>{score}</b>
-      {label}
+    <span className="pointer-events-none absolute bottom-[calc(100%+8px)] left-1/2 -translate-x-1/2 rounded-md border border-border-strong bg-raised px-2 py-1 text-xs whitespace-nowrap text-foreground opacity-0 transition-opacity group-hover/ib:opacity-100 group-focus-visible/ib:opacity-100">
+      {children}
     </span>
   );
 }
 
-export const btn =
-  "inline-flex items-center justify-center gap-2 rounded-xl border border-border-strong bg-raised font-semibold whitespace-nowrap transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40 [&_svg]:size-[18px] [&_svg]:shrink-0";
-export const btnSm = "h-[34px] px-3 text-[13px] rounded-[9px] [&_svg]:size-4";
-export const btnLg = "h-11 px-[18px] text-[15px]";
+type CardProps = {
+  short: Short;
+  best: number;
+  hidden: boolean;
+  selecting: boolean;
+  selected: boolean;
+  onOpen: () => void;
+  onEdit: () => void;
+  onCopy: () => void;
+  onHide: () => void;
+  onDelete: () => void;
+};
 
-export function SaveButton({ saved, onClick, large, withLabel }: { saved: boolean; onClick: () => void; large?: boolean; withLabel?: boolean }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={saved}
-      aria-label={withLabel ? undefined : saved ? "Saved" : "Save"}
-      title={saved ? "Saved" : "Save"}
-      className={cn(btn, large ? btnLg : btnSm, saved && "border-moment/50 bg-moment-soft text-moment hover:bg-moment-soft")}
-    >
-      <Heart className={cn(saved && "fill-current")} aria-hidden="true" />
-      {withLabel && (saved ? "Saved" : "Save")}
-      {withLabel && large && <kbd className="rounded-[5px] border border-current px-1.5 font-mono text-[11px] font-medium opacity-55">S</kbd>}
-    </button>
-  );
-}
-
-/** Hover plays a muted preview; click opens the watch view. */
-export function ShortCard({ short, best, saved, hidden, onOpen, onSave, onHide }: { short: Short; best: number; saved: boolean; hidden: boolean; onOpen: () => void; onSave: () => void; onHide: () => void }) {
+/** A clean card: hover lifts it and plays a silent preview; the actions sit on the cover. */
+export function ShortCard({ short, best, hidden, selecting, selected, onOpen, onEdit, onCopy, onHide, onDelete }: CardProps) {
   const video = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
   const [menu, setMenu] = useState(false);
-  const menuRef = useRef<HTMLSpanElement>(null);
-
-  useEffect(() => {
-    if (!menu) return;
-    const close = (e: MouseEvent) => !menuRef.current?.contains(e.target as Node) && setMenu(false);
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, [menu]);
 
   function start() {
     const v = video.current;
-    if (!v || window.matchMedia("(hover: none)").matches) return;
+    if (!v || selecting || window.matchMedia("(hover: none)").matches) return;
     v.preload = "auto";
     v.currentTime = 0;
     v.play().then(() => setPlaying(true)).catch(() => {});
@@ -69,59 +48,111 @@ export function ShortCard({ short, best, saved, hidden, onOpen, onSave, onHide }
     setPlaying(false);
   }
 
+  const showActs = !selecting;
   return (
-    <article className="relative grid content-start gap-2.5">
-      <button
-        type="button"
-        onClick={onOpen}
+    <article className="group/card relative grid content-start gap-2.5">
+      <div
+        role="button"
+        tabIndex={0}
+        aria-label={`${selecting ? (selected ? "Unselect" : "Select") : "Watch"} ${short.title}`}
+        aria-pressed={selecting ? selected : undefined}
+        onClick={(e) => !(e.target as HTMLElement).closest("[data-acts]") && onOpen()}
+        onKeyDown={(e) => {
+          if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
+            e.preventDefault();
+            onOpen();
+          }
+        }}
         onMouseEnter={start}
         onMouseLeave={stop}
-        onFocus={start}
-        onBlur={stop}
-        aria-label={`Watch ${short.title}`}
-        className="relative block aspect-[9/16] overflow-hidden rounded-[18px] border bg-black transition-colors hover:border-border-strong"
+        className={cn(
+          "relative aspect-[9/16] cursor-pointer overflow-hidden rounded-[18px] bg-black outline-1 -outline-offset-1 outline-border transition-[transform,outline-color] duration-200",
+          "[@media(hover:hover)]:group-hover/card:-translate-y-[3px] [@media(hover:hover)]:group-hover/card:outline-border-strong",
+          selected && "outline-[3px] -outline-offset-[3px] outline-moment group-hover/card:outline-moment",
+        )}
       >
         {/* eslint-disable-next-line @next/next/no-img-element -- poster served by our own route */}
-        <img src={short.posterUrl} alt="" loading="lazy" className={cn("absolute inset-0 h-full w-full object-cover", hidden && "brightness-50 grayscale")} />
-        <video ref={video} src={short.videoUrl} muted loop playsInline preload="none" className={cn("absolute inset-0 h-full w-full object-cover opacity-0 transition-opacity", playing && "opacity-100")} />
-        <ScoreBadge score={short.score} best={best} solid className="absolute top-2 left-2" />
-        {saved && (
-          <span className="absolute top-2 right-2 grid size-[30px] place-items-center rounded-full bg-foreground text-moment">
-            <Heart className="size-4 fill-current" aria-hidden="true" />
+        <img src={short.posterUrl} alt="" loading="lazy" className={cn("absolute inset-0 h-full w-full object-cover", hidden && "brightness-[0.55] grayscale")} />
+        <video ref={video} src={short.videoUrl} muted loop playsInline preload="none" className={cn("absolute inset-0 h-full w-full object-cover opacity-0 transition-opacity duration-250", playing && "opacity-100")} />
+
+        {selecting ? (
+          <span className={cn("absolute top-2.5 left-2.5 grid size-[26px] place-items-center rounded-full border-2 border-white/85 bg-black/35 text-transparent", selected && "border-moment bg-moment text-moment-ink")}>
+            <Check className="size-[15px]" strokeWidth={3} aria-hidden="true" />
           </span>
+        ) : (
+          <Score score={short.score} best={best} className="absolute top-2.5 left-2.5" />
         )}
-        <span className="absolute right-2 bottom-2 rounded-md bg-background/80 px-[7px] font-mono text-xs font-medium">{formatTime(short.durSec)}</span>
-      </button>
-
-      <h2 className="line-clamp-2 min-h-[2.7em] text-[15px] leading-[1.35] font-semibold tracking-[-0.01em]">{short.title}</h2>
-
-      <div className="grid grid-cols-[1fr_auto_auto] gap-1.5">
-        <a href={short.videoUrl} download={short.downloadName} className={cn(btn, btnSm)}>
-          <Download aria-hidden="true" />
-          <span className="max-sm:sr-only">Download</span>
-        </a>
-        <SaveButton saved={saved} onClick={onSave} />
-        <span ref={menuRef} className="relative">
-          <button type="button" onClick={() => setMenu((m) => !m)} aria-expanded={menu} aria-label="More options" className={cn(btn, btnSm, "border-transparent bg-transparent text-muted-foreground hover:text-foreground")}>
-            <Ellipsis aria-hidden="true" />
-          </button>
-          {menu && (
-            <span className="absolute right-0 bottom-10 z-10 min-w-[160px] rounded-xl border border-border-strong bg-raised p-1 shadow-[0_16px_40px_rgb(0_0_0/0.5)]">
-              <button
-                type="button"
-                onClick={() => {
-                  setMenu(false);
-                  onHide();
-                }}
-                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-hover"
-              >
-                {hidden ? <Eye className="size-4" aria-hidden="true" /> : <EyeOff className="size-4" aria-hidden="true" />}
-                {hidden ? "Show again" : "Hide this short"}
-              </button>
-            </span>
+        <span
+          className={cn(
+            "absolute right-2.5 bottom-2.5 rounded-md bg-background/85 px-[7px] font-mono text-xs font-medium transition-opacity [@media(hover:none)]:hidden",
+            showActs && "group-focus-within/card:opacity-0 group-hover/card:opacity-0",
+            menu && "opacity-0",
           )}
+        >
+          {formatTime(short.durSec)}
         </span>
+
+        {showActs && (
+          <div
+            data-acts
+            className={cn(
+              "absolute inset-x-0 bottom-0 flex justify-end gap-1.5 bg-gradient-to-b from-transparent to-black/70 px-2.5 pt-[30px] pb-2.5 transition-[opacity,transform] duration-200 [@media(hover:hover)]:pt-10",
+              "[@media(hover:hover)]:translate-y-1.5 [@media(hover:hover)]:opacity-0 group-focus-within/card:translate-y-0 group-focus-within/card:opacity-100 group-hover/card:translate-y-0 group-hover/card:opacity-100",
+              menu && "translate-y-0 opacity-100",
+            )}
+          >
+            <a href={short.videoUrl} download={short.downloadName} aria-label="Download" className={roundBtn}>
+              <Download aria-hidden="true" />
+              <Tip>Download</Tip>
+            </a>
+            <button type="button" onClick={onEdit} aria-label="Edit" className={roundBtn}>
+              <Scissors aria-hidden="true" />
+              <Tip>Edit</Tip>
+            </button>
+            <span className="relative">
+              <button type="button" onClick={() => setMenu((m) => !m)} aria-label="More options" aria-expanded={menu} className={roundBtn}>
+                <Ellipsis aria-hidden="true" />
+                {!menu && <Tip>More</Tip>}
+              </button>
+              <Menu open={menu} onClose={() => setMenu(false)} className="bottom-[calc(100%+8px)]">
+                <MenuItem
+                  icon={<Copy />}
+                  onClick={() => {
+                    setMenu(false);
+                    onCopy();
+                  }}
+                >
+                  Copy post caption
+                </MenuItem>
+                <MenuItem
+                  icon={hidden ? <Eye /> : <EyeOff />}
+                  onClick={() => {
+                    setMenu(false);
+                    onHide();
+                  }}
+                >
+                  {hidden ? "Show again" : "Hide from this project"}
+                </MenuItem>
+                <MenuItem
+                  icon={<Trash2 />}
+                  danger
+                  onClick={() => {
+                    setMenu(false);
+                    onDelete();
+                  }}
+                >
+                  Delete short
+                </MenuItem>
+              </Menu>
+            </span>
+          </div>
+        )}
       </div>
+
+      <h2 className="line-clamp-2 text-[15px] leading-[1.35] font-semibold tracking-[-0.01em]">{short.title}</h2>
+      <small className="-mt-1.5 text-[13px] text-subtle">
+        {formatTime(short.durSec)} long, at {formatTime(short.startSec)} in the video
+      </small>
     </article>
   );
 }

@@ -1,50 +1,47 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { ChevronLeft, ChevronRight, Download, Eye, EyeOff, Heart } from "lucide-react";
-import type { ReviewMap } from "@/lib/jobs";
+import { ChevronLeft, ChevronRight, Copy, Download, Eye, EyeOff, Trash2 } from "lucide-react";
+import { Score, btn, btnGhost, btnLg, btnPrimary, btnSm, formatTime } from "@/components/kit";
 import { cn } from "@/lib/utils";
-import { formatTime, type Short } from "./model";
-import { ScoreBadge, SaveButton, btn, btnLg, btnSm } from "./parts";
+import type { Short } from "./model";
 
 type Props = {
   short: Short;
   list: Short[];
   best: number;
-  review: ReviewMap;
+  hidden: boolean;
   onGo: (id: string) => void;
   onBack: () => void;
-  onSave: (id: string) => void;
   onHide: (id: string) => void;
+  onCopy: (s: Short) => void;
+  onDelete: (s: Short) => void;
 };
 
-export function WatchView({ short, list, best, review, onGo, onBack, onSave, onHide }: Props) {
+export function WatchView({ short, list, best, hidden, onGo, onBack, onHide, onCopy, onDelete }: Props) {
   const n = list.findIndex((s) => s.id === short.id);
   const prev = n > 0 ? list[n - 1] : null;
   const next = n >= 0 && n < list.length - 1 ? list[n + 1] : null;
-  const saved = review[short.id] === "saved";
-  const hidden = review[short.id] === "hidden";
   const current = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     current.current?.scrollIntoView({ block: "nearest" });
   }, [short.id]);
 
-  // Arrows flip through, S saves, Esc goes back to all shorts.
+  // Arrows flip through, Esc goes back to all shorts.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.metaKey || e.ctrlKey || e.altKey || (e.target as HTMLElement).closest("input, textarea, select")) return;
       const k = e.key.toLowerCase();
       if (k === "arrowleft" && prev) onGo(prev.id);
       else if (k === "arrowright" && next) onGo(next.id);
-      else if (k === "s") onSave(short.id);
       else if (k === "escape") onBack();
       else return;
       e.preventDefault();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [prev, next, short.id, onGo, onSave, onBack]);
+  }, [prev, next, onGo, onBack]);
 
   const arrow = "absolute top-1/2 grid size-11 -translate-y-1/2 place-items-center rounded-full border border-border-strong bg-raised/90 hover:bg-hover disabled:pointer-events-none disabled:opacity-30";
 
@@ -76,20 +73,25 @@ export function WatchView({ short, list, best, review, onGo, onBack, onSave, onH
           </div>
 
           <div className="min-w-0">
-            <ScoreBadge score={short.score} best={best} />
+            <Score score={short.score} best={best} />
             <h1 className="mt-2 mb-2 text-[28px] leading-[1.15] font-[650] tracking-[-0.03em]">{short.title}</h1>
             <p className="text-[13px] text-muted-foreground">
               {Math.round(short.durSec)} seconds, from {formatTime(short.startSec)} in your video
             </p>
 
             <div className="my-[22px] flex flex-wrap gap-2.5 max-sm:[&>*]:flex-1">
-              <a href={short.videoUrl} download={short.downloadName} className={cn(btn, btnLg, "border-foreground bg-foreground text-background hover:bg-[#e4e4e7]")}>
+              <a href={short.videoUrl} download={short.downloadName} className={cn(btn, btnLg, btnPrimary)}>
                 <Download aria-hidden="true" /> Download
               </a>
-              <SaveButton saved={saved} onClick={() => onSave(short.id)} large withLabel />
-              <button type="button" onClick={() => onHide(short.id)} className={cn(btn, btnLg, "border-transparent bg-transparent text-muted-foreground hover:text-foreground")}>
+              <button type="button" onClick={() => onCopy(short)} className={cn(btn, btnLg)}>
+                <Copy aria-hidden="true" /> Copy caption
+              </button>
+              <button type="button" onClick={() => onHide(short.id)} className={cn(btn, btnLg, btnGhost)}>
                 {hidden ? <Eye aria-hidden="true" /> : <EyeOff aria-hidden="true" />}
                 {hidden ? "Show again" : "Hide"}
+              </button>
+              <button type="button" onClick={() => onDelete(short)} aria-label="Delete short" title="Delete short" className={cn(btn, btnLg, btnGhost, "w-12 px-0 hover:text-bad")}>
+                <Trash2 aria-hidden="true" />
               </button>
             </div>
 
@@ -126,9 +128,8 @@ export function WatchView({ short, list, best, review, onGo, onBack, onSave, onH
                 <span className="min-w-0">
                   <b className="mb-1.5 block text-sm leading-[1.3] font-medium">{s.title}</b>
                   <span className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <ScoreBadge score={s.score} best={best} className="px-2 text-xs [&_b]:text-xs" />
+                    <Score score={s.score} best={best} className="px-2 text-xs [&_b]:text-xs" />
                     {formatTime(s.durSec)}
-                    {review[s.id] === "saved" && <Heart className="size-3.5 fill-moment text-moment" aria-label="Saved" />}
                   </span>
                 </span>
               </button>

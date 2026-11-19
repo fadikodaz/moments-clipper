@@ -1,7 +1,6 @@
 import type { EngineClip, ReviewMap } from "@/lib/jobs";
 
 export type Short = EngineClip & { videoUrl: string; posterUrl: string; downloadName: string };
-export type Filter = "all" | "saved" | "hidden";
 export type Sort = "best" | "time";
 
 export function toShorts(jobId: string, clips: EngineClip[]): Short[] {
@@ -13,21 +12,18 @@ export function toShorts(jobId: string, clips: EngineClip[]): Short[] {
   }));
 }
 
-/** Scores are relative to this video: its best shorts get the moment colour, the rest plain words. */
-export function scoreLabel(score: number, best: number) {
-  if (score >= best - 2) return { label: "Best pick", top: true };
-  if (score >= 75) return { label: "Strong", top: false };
-  if (score >= 70) return { label: "Good", top: false };
-  return { label: "Maybe", top: false };
-}
-
-export function visibleShorts(all: Short[], review: ReviewMap, filter: Filter, sort: Sort) {
-  const list = all.filter((s) => (filter === "all" ? review[s.id] !== "hidden" : review[s.id] === filter));
+/** Shown or hidden list, sorted. Deleted shorts never appear. */
+export function visibleShorts(all: Short[], review: ReviewMap, hidden: boolean, sort: Sort) {
+  const list = all.filter((s) => review[s.id] !== "deleted" && (review[s.id] === "hidden") === hidden);
   return list.sort((a, b) => (sort === "best" ? b.score - a.score : a.startSec - b.startSec));
 }
 
-export function formatTime(sec: number) {
-  const s = Math.max(0, Math.round(sec));
-  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
-  return h ? `${h}:${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}` : `${m}:${String(r).padStart(2, "0")}`;
+/** A ready-to-paste caption for TikTok, Shorts and Reels. */
+export function postCaption(s: Short) {
+  const tags = ["gaming", "shorts", ...s.tags]
+    .map((t) => t.toLowerCase().replace(/[^a-z0-9]/g, ""))
+    .filter((t, i, all) => t && all.indexOf(t) === i)
+    .slice(0, 6)
+    .map((t) => `#${t}`);
+  return `${s.title}\n\n${tags.join(" ")}`;
 }

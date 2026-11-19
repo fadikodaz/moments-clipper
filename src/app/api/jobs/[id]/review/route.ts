@@ -1,12 +1,18 @@
-import { getJob, setReview, type ReviewState } from "@/lib/jobs";
+import { deleteShort, getJob, getReview, setReview, type ReviewState } from "@/lib/jobs";
 
-/** Save, hide or clear one short: PUT { clip: "c03", state: "saved" | "hidden" | null } */
+/** Hide, unhide or delete shorts: PUT { clip: "c03" | ["c03", "c05"], state: "hidden" | "deleted" | null } */
 export async function PUT(request: Request, ctx: RouteContext<"/api/jobs/[id]/review">) {
   const { id } = await ctx.params;
   if (!(await getJob(id))) return Response.json({ error: "Job not found" }, { status: 404 });
   const body = (await request.json().catch(() => null)) as { clip?: unknown; state?: unknown } | null;
-  const clip = typeof body?.clip === "string" && /^c\d{2,3}$/.test(body.clip) ? body.clip : null;
-  const state = body?.state === "saved" || body?.state === "hidden" ? (body.state as ReviewState) : body?.state === null ? null : undefined;
-  if (!clip || state === undefined) return Response.json({ error: "Send a clip id and a state of saved, hidden or null." }, { status: 400 });
-  return Response.json(await setReview(id, clip, state));
+  const raw: unknown[] = Array.isArray(body?.clip) ? body.clip : [body?.clip];
+  const clips = raw.filter((c): c is string => typeof c === "string" && /^c\d{2,3}$/.test(c));
+  const s = body?.state;
+  const state = s === "saved" || s === "hidden" || s === "deleted" ? (s as ReviewState) : s === null ? null : undefined;
+  if (!clips.length || state === undefined) return Response.json({ error: "Send clip ids and a state of hidden, deleted or null." }, { status: 400 });
+  for (const clip of clips) {
+    if (state === "deleted") await deleteShort(id, clip);
+    else await setReview(id, clip, state);
+  }
+  return Response.json(await getReview(id));
 }

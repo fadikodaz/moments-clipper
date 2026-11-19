@@ -22,6 +22,8 @@ import shutil
 import threading
 import time
 import traceback
+
+import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -51,7 +53,7 @@ class Status:
     def write(self, state: str, step: int = 0, part: float = 0.0, detail: str = "", error: str | None = None) -> None:
         done = sum(w for s, w in self.weights.items() if s < step) + self.weights.get(step, 0) * max(0.0, min(1.0, part))
         data = {"state": state, "step": step, "steps": len(self.weights), "label": LABELS.get(step, ""), "detail": detail,
-                "progress": 1.0 if state == "done" else round(done, 3), "started": self.started, "updated": time.time(), "error": error}
+                "progress": 1.0 if state == "done" else round(done, 3), "part": round(max(0.0, min(1.0, part)), 3), "started": self.started, "updated": time.time(), "error": error}
         with self.lock:
             # Throttle tiny progress updates (downloads report many per second).
             if state == "running" and step == getattr(self, "_last_step", None) and time.time() - getattr(self, "_last_t", 0) < 0.5:
@@ -73,7 +75,19 @@ def slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:40] or "clip"
 
 
-def run(source: str, out_dir: Path, layout: str, top: int, status: Status) -> None:
+def write_timeline(out_dir: Path, data: dict) -> None:
+    """Small file the progress page draws: the sound of the whole video plus every moment found."""
+    tmp = out_dir / "timeline.tmp"
+    tmp.write_text(json.dumps(data), encoding="utf-8")
+    for _ in range(20):
+        try:
+            os.replace(tmp, out_dir / "timeline.json")
+            return
+        except PermissionError:
+            time.sleep(0.05)
+
+
+def run(source: str, out_dir: Path, layout: str, top: int, status: Status, length: str = "auto", count: int | None = None, captions: str = "bold") -> None:
     key = load_key()
     timings = {}
     t_all = time.perf_counter()
@@ -114,11 +128,28 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status) -> No
     t = time.perf_counter()
     loud = loudness_per_second(wav)
     timings["3_measure"] = time.perf_counter() - t
+    # 160 bars for the progress page; louder parts are taller.
+    bins = np.array_split(loud, min(160, max(1, len(loud))))
+    lv = np.array([b.mean() for b in bins])
+    lv = (lv - np.percentile(lv, 5)) / max(1e-6, np.percentile(lv, 99) - np.percentile(lv, 5))
+    timeline = {"durationSec": len(loud), "bars": [round(float(min(1, max(0.06, v))), 3) for v in lv], "moments": []}
+    write_timeline(out_dir, timeline)
+
+    def found(new: list[dict]) -> None:
+        for m in new:
+            try:
+                timeline["moments"].append({"start": float(m["start"]), "end": float(m["end"]), "score": m.get("overall"), "title": m.get("title")})
+            except (KeyError, TypeError, ValueError):
+                pass
+        write_timeline(out_dir, timeline)
 
     status.write("running", 4, 0, "Reading what you said")
     t = time.perf_counter()
-    picks = pick(video, key, transcript, loud, top=top,
+    picks = pick(video, key, transcript, loud, top=top, length=length, count=count, on_found=found,
                  on_batch=lambda i, n: status.write("running", 4, i / n, f"Read part {i} of {n}"))["picks"]
+    # The timeline now shows only the moments that became shorts.
+    timeline["moments"] = [{"id": f"c{p['rank']:02d}", "start": p["start"], "end": p["end"], "score": p.get("overall"), "title": p.get("title")} for p in picks]
+    write_timeline(out_dir, timeline)
     timings["4_pick"] = time.perf_counter() - t
     if not picks:
         raise RuntimeError("No moments were good enough to post. Try a longer recording with more action or talking.")
@@ -142,6 +173,7 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status) -> No
         """Written after every finished short, so the website can show them one by one."""
         clips = sorted(ready, key=lambda c: c["rank"])
         summary = {"video": title, "duration": fmt(len(loud)), "durationSec": len(loud), "layout": layout, "facecam": box,
+                   "settings": {"length": length, "count": count, "captions": captions},
                    "expected": len(picks), "complete": final, "timings_s": {k: round(v, 1) for k, v in timings.items()}, "clips": clips}
         tmp = out_dir / "clips.tmp"
         tmp.write_text(json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -175,6 +207,8 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status) -> No
             input_for = lambda t: ["-ss", str(t), "-i", str(src)]
         try:
             box = find_facecam(len(loud), input_for, layout)
+            if layout == "auto" and not box:
+                print("    no facecam found: shorts use the gameplay only", flush=True)
         except Exception as e:  # detection is a nice-to-have; the default box still works
             print(f"    facecam detection failed: {e}", flush=True)
         print(f"    facecam: {box or 'not found, using the default corner box'}", flush=True)
@@ -185,7 +219,7 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status) -> No
         res = None
         for attempt in (1, 2):  # one retry: a single failed cut should not cost the whole job
             try:
-                res = render_short(mode["video"], p["start"], p["end"] - p["start"], out_dir, name, key, transcript, p.get("hook"), layout, mode["remote"], box)
+                res = render_short(mode["video"], p["start"], p["end"] - p["start"], out_dir, name, key, transcript, p.get("hook"), layout, mode["remote"], box, captions)
                 break
             except RuntimeError as e:
                 print(f"    #{p['rank']} attempt {attempt} failed: {str(e)[:300]}", flush=True)
@@ -231,7 +265,10 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("source", help="a video file, or a YouTube link")
     ap.add_argument("--out", type=Path, help="output folder (default: <video folder>/output/<name>; required for links)")
-    ap.add_argument("--layout", choices=LAYOUTS, default="top-right", help="where the facecam is, or none")
+    ap.add_argument("--layout", choices=LAYOUTS, default="auto", help="auto finds the facecam; or a corner, or none")
+    ap.add_argument("--length", choices=("auto", "short", "long"), default="auto", help="auto 60-150 s, short 30-60 s, long 60-180 s")
+    ap.add_argument("--count", type=int, default=0, help="exact number of shorts (0 = about one per 5 minutes)")
+    ap.add_argument("--captions", choices=("bold", "simple", "none"), default="bold")
     ap.add_argument("--top", type=int, default=10)
     ap.add_argument("--fresh", action="store_true", help="ignore saved audio/transcript and redo every step")
     a = ap.parse_args()
@@ -248,7 +285,7 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     status = Status(out_dir / "status.json", LINK_WEIGHTS if link else WEIGHTS)
     try:
-        run(a.source, out_dir, a.layout, a.top, status)
+        run(a.source, out_dir, a.layout, max(a.top, a.count), status, a.length, a.count or None, a.captions)
     except BaseException as e:  # includes sys.exit from helpers, so the website always learns the job stopped
         msg = str(e) or e.__class__.__name__
         status.write("failed", 0, 0, "", msg[-600:])
