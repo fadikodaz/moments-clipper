@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from facecam import find_facecam
-from fetch import is_url, remote_source
+from fetch import FetchError, has_pieces, is_url, remote_source, segment_frame_input
 
 
 def write(path: Path, data: dict) -> None:
@@ -50,10 +50,22 @@ def main() -> None:
     state = out / "probe.json"
     write(state, {"state": "running", "started": time.time()})
     try:
+        lo_input_for = None
         if is_url(a.source):
-            rs = remote_source(a.source)
-            input_for = lambda t: ["-ss", str(t), "-headers", rs["headers"], "-i", rs["video"]]
-            size = (rs["width"], rs["height"])
+            try:
+                fast = has_pieces(a.source)
+            except FetchError:
+                fast = False
+            if fast:
+                # One 5-second piece per picture, downloaded in parallel: far quicker than seeking in the stream.
+                cache = out / "pieces"
+                input_for = lambda t: segment_frame_input(a.source, t, "hi", cache)
+                lo_input_for = lambda t: segment_frame_input(a.source, t, "lo", cache)
+                size = (1280, 720)
+            else:
+                rs = remote_source(a.source)
+                input_for = lambda t: ["-ss", str(t), "-headers", rs["headers"], "-i", rs["video"]]
+                size = (rs["width"], rs["height"])
             total = a.duration or 0
         else:
             input_for = lambda t: ["-ss", str(t), "-i", a.source]
@@ -83,12 +95,14 @@ def main() -> None:
                     return {"file": f.name, "t": t + k * 45}
             return {"file": f.name, "t": t} if f.exists() else None
 
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        with ThreadPoolExecutor(max_workers=4) as pool:  # each picture's piece downloads in parallel too
             frames = [f for f in pool.map(grab, enumerate(times)) if f]
         if not frames:
             raise RuntimeError("Couldn't read any picture from the video.")
         # The facecam search reads its own 16 small frames from the same part.
-        box = find_facecam(span, lambda t: input_for(t + lo), "auto")
+        box = find_facecam(span, lambda t: (lo_input_for or input_for)(t + lo), "auto")
+        for f in (out / "pieces").glob("*"):
+            f.unlink(missing_ok=True)
         write(state, {"state": "done", "frames": frames, "box": box, "width": size[0], "height": size[1], "updated": time.time()})
         print("probe:", frames, box, flush=True)
     except BaseException as e:  # the website must always learn how it ended

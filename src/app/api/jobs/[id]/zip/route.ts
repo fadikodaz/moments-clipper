@@ -2,10 +2,12 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { crc32 } from "node:zlib";
-import { getResult, outputFile } from "@/lib/jobs";
+import { PLATFORMS, postKit, toShorts } from "@/components/shorts/model";
+import { getJob, getResult, outputFile } from "@/lib/jobs";
 
 /**
  * Several shorts as one ZIP: GET /api/jobs/<id>/zip?clips=c01,c03
+ * Each short comes with a .txt holding its ready-to-paste title, captions and hashtags per platform.
  * Videos are already compressed, so files are stored as-is (no re-compression) and streamed,
  * which keeps memory flat even for large downloads.
  */
@@ -17,12 +19,19 @@ export async function GET(request: Request, ctx: RouteContext<"/api/jobs/[id]/zi
   const picked = result.clips.filter((c) => wanted.includes(c.id));
   if (!picked.length) return new Response("Choose at least one short", { status: 400 });
 
-  const files = [];
+  const campaign = (await getJob(id))?.meta.campaign ?? null;
+  const shorts = toShorts(id, picked);
+  const files: Entry[] = [];
   for (const [i, c] of picked.entries()) {
     const full = outputFile(id, c.file);
     if (!full) continue;
     const safe = c.title.replace(/[^\w\s-]/g, "").replace(/\s+/g, " ").trim().slice(0, 60) || c.id;
-    files.push({ full, name: `${String(i + 1).padStart(2, "0")} ${safe}.mp4`, size: (await stat(full)).size });
+    const base = `${String(i + 1).padStart(2, "0")} ${safe}`;
+    files.push({ full, name: `${base}.mp4`, size: (await stat(full)).size });
+    const kit = postKit(shorts[i], campaign);
+    const text = PLATFORMS.map(([k, label]) => `${label}\r\n${kit[k].map(([l, t]) => `${l}:\r\n${t.replace(/\n/g, "\r\n")}`).join("\r\n\r\n")}`).join("\r\n\r\n----------\r\n\r\n");
+    const data = Buffer.from(text + "\r\n", "utf8");
+    files.push({ data, name: `${base}.txt`, size: data.length });
   }
 
   const project = result.video.replace(/\.[^.]+$/, "").replace(/[^\w-]+/g, "-");
@@ -32,7 +41,7 @@ export async function GET(request: Request, ctx: RouteContext<"/api/jobs/[id]/zi
   });
 }
 
-type Entry = { full: string; name: string; size: number };
+type Entry = { full?: string; data?: Buffer; name: string; size: number };
 
 /** Minimal ZIP writer (stored entries, sizes known up front, CRC computed while streaming). */
 async function* zipStream(files: Entry[]) {
@@ -54,9 +63,14 @@ async function* zipStream(files: Entry[]) {
     yield name;
 
     let crc = 0;
-    for await (const chunk of createReadStream(f.full)) {
-      crc = crc32(chunk as Buffer, crc);
-      yield chunk as Buffer;
+    if (f.data) {
+      crc = crc32(f.data);
+      yield f.data;
+    } else {
+      for await (const chunk of createReadStream(f.full!)) {
+        crc = crc32(chunk as Buffer, crc);
+        yield chunk as Buffer;
+      }
     }
 
     const desc = Buffer.alloc(16);

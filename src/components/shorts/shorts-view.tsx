@@ -8,6 +8,7 @@ import type { EngineResult, JobMeta, ReviewMap, ReviewState } from "@/lib/jobs";
 import { cn } from "@/lib/utils";
 import { postCaption, toShorts, visibleShorts, type Short, type Sort } from "./model";
 import { ShortCard } from "./parts";
+import { EditorView } from "@/components/editor/editor-view";
 import { WatchView, type Frame, type Tab } from "./watch-view";
 
 /** The open short lives in the URL hash (#watch=c03), so back/forward and reloads keep your place. */
@@ -39,7 +40,10 @@ export function ShortsView({ jobId, meta, result, initialReview, notice, locked,
   const hash = new URLSearchParams(useHash().slice(1));
   const watchId = hash.get("watch");
   const tabParam = hash.get("tab");
-  const initialTab: Tab = tabParam === "edit" || tabParam === "why" ? tabParam : "post";
+  const initialTab: Tab = tabParam === "why" ? "why" : "post";
+  // Older links (#watch=c02&tab=edit) open the editor too.
+  const editId = hash.get("edit") ?? (tabParam === "edit" ? watchId : null);
+  const editing = editId ? shorts.find((s) => s.id === editId && review[s.id] !== "deleted") : undefined;
   const canFacecam = !!result.facecam || !["auto", "none", undefined].includes(result.layout);
   const list = visibleShorts(shorts, review, showHidden, sort);
   const shown = visibleShorts(shorts, review, false, sort);
@@ -52,6 +56,10 @@ export function ShortsView({ jobId, meta, result, initialReview, notice, locked,
 
   const go = useCallback((id: string, tab?: string) => {
     window.location.hash = `watch=${id}${tab ? `&tab=${tab}` : ""}`;
+    window.scrollTo({ top: 0 });
+  }, []);
+  const openEdit = useCallback((id: string) => {
+    window.location.hash = `edit=${id}`;
     window.scrollTo({ top: 0 });
   }, []);
   const back = useCallback(() => {
@@ -144,6 +152,25 @@ export function ShortsView({ jobId, meta, result, initialReview, notice, locked,
 
   const zip = (ids: string[]) => `/api/jobs/${jobId}/zip?clips=${ids.join(",")}`;
 
+  if (editing) {
+    return (
+      <EditorView
+        jobId={jobId}
+        short={editing}
+        total={shown.length}
+        videoSec={result.sourceSec ?? result.durationSec}
+        canFacecam={canFacecam}
+        defaultCaptions={meta.options?.captions ?? "bold"}
+        frames={frames}
+        detected={result.facecam ? { x: result.facecam.x, y: result.facecam.y, w: result.facecam.w, h: result.facecam.h } : null}
+        locked={locked}
+        campaign={meta.campaign ?? undefined}
+        onBack={() => go(editing.id)}
+        onChanged={onReload}
+      />
+    );
+  }
+
   if (watching) {
     return (
       <div className="mx-auto max-w-[1320px] px-3.5 pt-[18px] pb-[130px] md:px-8 md:pt-8 md:pb-[120px]">
@@ -152,15 +179,10 @@ export function ShortsView({ jobId, meta, result, initialReview, notice, locked,
           jobId={jobId}
           projectName={name}
           initialTab={initialTab}
-          videoSec={result.durationSec}
-          canFacecam={canFacecam}
-          defaultCaptions={meta.options?.captions ?? "bold"}
           locked={locked}
-          onChanged={onReload}
+          onEdit={(s) => openEdit(s.id)}
           toast={toast.show}
           campaign={meta.campaign}
-          frames={frames}
-          detected={result.facecam ? { x: result.facecam.x, y: result.facecam.y, w: result.facecam.w, h: result.facecam.h } : null}
           short={watching}
           list={shown.some((s) => s.id === watching.id) ? shown : list}
           best={best}
@@ -311,7 +333,7 @@ export function ShortsView({ jobId, meta, result, initialReview, notice, locked,
                   return n;
                 });
               }}
-              onEdit={() => go(s.id, "edit")}
+              onEdit={() => openEdit(s.id)}
               onCopy={() => copy(s)}
               onHide={() => toggleHide(s.id)}
               onDelete={() => remove(s)}

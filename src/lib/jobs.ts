@@ -133,6 +133,8 @@ export type EngineResult = {
   duration: string;
   durationSec: number;
   layout: string;
+  /** Length of the whole source video (a project may cover only part of it). */
+  sourceSec?: number;
   /** Facecam box found in the video (fractions of the frame), or null when there is none. */
   facecam?: { x: number; y: number; w: number; h: number } | null;
   /** How many shorts the AI picked; clips fills up to this while the job runs. */
@@ -643,7 +645,7 @@ export async function getRemakeAll(id: string): Promise<RemakeAllStatus | null> 
 }
 
 /** Give every short of a project the same look, one after another (about 40 s each). */
-export async function startRemakeAll(id: string, style: Record<string, unknown>): Promise<string | null> {
+export async function startRemakeAll(id: string, style: Record<string, unknown>, exclude: string[] = []): Promise<string | null> {
   const job = await getJob(id);
   if (!job) return "Project not found.";
   if (job.status.state === "running" || job.status.state === "queued") return "Wait until all shorts are made, then edit.";
@@ -651,8 +653,9 @@ export async function startRemakeAll(id: string, style: Record<string, unknown>)
   const result = await getResult(id);
   for (const c of result?.clips ?? []) if ((await getRemake(id, c.id))?.state === "running") return "A short is being made again. Wait for it to finish.";
   const editsFile = path.join(jobDir(id), "edits-all.json");
-  await writeFile(editsFile, JSON.stringify({ style }));
-  await writeFile(path.join(outDir(id), "remake-all.json"), JSON.stringify({ state: "running", done: 0, total: result?.clips.length ?? 0, updated: Date.now() / 1000 } satisfies RemakeAllStatus));
+  await writeFile(editsFile, JSON.stringify({ style, exclude }));
+  const total = (result?.clips.length ?? 0) - exclude.length;
+  await writeFile(path.join(outDir(id), "remake-all.json"), JSON.stringify({ state: "running", done: 0, total, updated: Date.now() / 1000 } satisfies RemakeAllStatus));
   runHelper(id, REMAKE, [jobDir(id), "ALL", editsFile]);
   return null;
 }

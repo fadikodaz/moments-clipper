@@ -25,7 +25,13 @@ DEFAULT = {
     "pipSize": 38,          # facecam width as % of the short's width (pip)
     "captions": {"style": "word", "font": "Montserrat", "size": 26, "color": "#ffffff", "hl": "#ffd23f",
                  "y": 62, "upper": True, "words": 3, "outline": True, "censor": True},
-    "hook": {"on": True, "style": "white", "sec": 3},
+    # Opening line: fg text colour, bg box colour (None = no box, outlined text), op = box see-through %,
+    # size in preview pixels (288-wide phone), show "start" (first sec seconds) or "all", pos "gap"/"top"/"custom" (y %).
+    "hook": {"on": True, "style": "white", "sec": 3, "font": "Montserrat", "fg": "#000000", "bg": "#ffffff", "op": 0,
+             "size": 17, "show": "start", "pos": "gap", "y": 34},
+    "gap": 0,               # space between facecam and gameplay, % of the short's height (top/bottom layouts)
+    "gapStyle": "black",    # black, blur or color
+    "gapColor": "#ff7448",
     "flash": True,          # start with 1.5 s of the biggest moment, then the story
     "zoom": True,           # quick push-in on the facecam at the loudest seconds
     "progress": True,
@@ -55,6 +61,29 @@ def _box(v):
         return None
     b["w"], b["h"] = min(b["w"], 1 - b["x"]), min(b["h"], 1 - b["y"])
     return b
+
+
+LEGACY_HOOK = {"white": ("#000000", "#ffffff"), "yellow": ("#000000", "#ffd23f"), "plain": ("#ffffff", None),
+               "black": ("#ffffff", "#111111"), "red": ("#ffffff", "#e53935"), "outline": ("#ffffff", None)}
+
+
+def _hook(h: dict, dh: dict) -> dict:
+    preset = h.get("style") if isinstance(h.get("style"), str) else dh["style"]
+    fg0, bg0 = LEGACY_HOOK.get(preset, (dh["fg"], dh["bg"]))
+    bg = h.get("bg", bg0) if "bg" in h else bg0
+    return {
+        "on": bool(h.get("on", dh["on"])),
+        "style": preset,
+        "sec": _num(h.get("sec"), 1.5, 8, dh["sec"]),
+        "font": h.get("font") if h.get("font") in FONTS else dh["font"],
+        "fg": _color(h.get("fg"), fg0),
+        "bg": None if bg is None else _color(bg, "#ffffff"),
+        "op": _num(h.get("op"), 0, 80, dh["op"]),
+        "size": _num(h.get("size"), 10, 30, dh["size"]),
+        "show": h.get("show") if h.get("show") in ("start", "all") else dh["show"],
+        "pos": h.get("pos") if h.get("pos") in ("gap", "top", "custom") else dh["pos"],
+        "y": _num(h.get("y"), 5, 92, dh["y"]),
+    }
 
 
 def normalize(raw: dict | None, layout: str = "auto", captions: str = "bold") -> dict:
@@ -87,11 +116,10 @@ def normalize(raw: dict | None, layout: str = "auto", captions: str = "bold") ->
             "outline": bool(c.get("outline", dc["outline"])),
             "censor": bool(c.get("censor", dc["censor"])),
         },
-        "hook": {
-            "on": bool(h.get("on", dh["on"])),
-            "style": h.get("style") if h.get("style") in ("white", "yellow", "plain") else dh["style"],
-            "sec": _num(h.get("sec"), 1.5, 8, dh["sec"]),
-        },
+        "hook": _hook(h, dh),
+        "gap": _num(raw.get("gap"), 0, 15, d["gap"]),
+        "gapStyle": raw.get("gapStyle") if raw.get("gapStyle") in ("black", "blur", "color") else d["gapStyle"],
+        "gapColor": _color(raw.get("gapColor"), d["gapColor"]),
         "flash": bool(raw.get("flash", d["flash"])),
         "zoom": bool(raw.get("zoom", d["zoom"])),
         "progress": bool(raw.get("progress", d["progress"])),

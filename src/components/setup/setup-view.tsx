@@ -1,14 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronLeft, LoaderCircle, Play, RotateCcw, Sparkles } from "lucide-react";
 import { Toast, api, btn, btnCta, btnGhost, btnLg, field, formatTime, useToast } from "@/components/kit";
 import type { JobMeta, Preset, Probe, TestRender } from "@/lib/jobs";
 import { cn } from "@/lib/utils";
-import { Card, CaptionControls, ExtraControls, HookControls, LayoutControls } from "./controls";
+import { CaptionPanel, EffectsPanel, HookPanel, LayoutPanel, Panel, ToolBar, type ToolKey } from "@/components/editor/tools";
 import { FrameEditor } from "./frame-editor";
-import { PhonePreview } from "./phone-preview";
+import { PhonePreview, type Part } from "./phone-preview";
 import { DEFAULT_STYLE, usesCam, withDefaults, type Style } from "./style";
 
 type SetupResponse = { meta: JobMeta; probe: Probe | null; test: TestRender | null };
@@ -38,7 +38,14 @@ export function SetupView({ jobId, meta, onStarted }: { jobId: string; meta: Job
   const [testStarted, setTestStarted] = useState(0);
   const [now, setNow] = useState(0);
   const [starting, setStarting] = useState(false);
+  const [tool, setTool] = useState<ToolKey>("layout");
+  const [sel, setSel] = useState<Part | null>("cam");
   const toast = useToast();
+  const who = meta.campaign?.streamer || mention?.split(" ")[0];
+  function pick(p: Part) {
+    setSel(p);
+    setTool(p === "hook" ? "hook" : p === "cap" ? "cap" : "layout");
+  }
 
   // The most recent saved look is used by default: one click next time.
   useEffect(() => {
@@ -97,10 +104,10 @@ export function SetupView({ jobId, meta, onStarted }: { jobId: string; meta: Job
   const hasCam = !!(style.cam ?? detected) && !style.nocam;
   // Without a facecam the cam layouts can't work: show gameplay only until one is placed.
   const eff: Style = !hasCam && usesCam({ ...style, nocam: false }) ? { ...style, layout: "game" } : style;
-  const set = useCallback((fn: (s: Style) => Style) => {
+  const set = (fn: (s: Style) => Style) => {
     setStyle(fn);
     setPreset("");
-  }, []);
+  };
 
   async function runTest() {
     setTesting("making");
@@ -172,90 +179,10 @@ export function SetupView({ jobId, meta, onStarted }: { jobId: string; meta: Job
         </div>
       </div>
 
-      <div className="grid items-start gap-7 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="grid gap-3.5">
-          <Card n={1} title="Where is the facecam?" sub="We look for it automatically. Drag the box to move it, drag a corner to resize. Check another frame to be sure it never moves.">
-            {probe?.state === "failed" ? (
-              <div className="rounded-xl border bg-raised p-4 text-[13px]">
-                <p className="text-bad">{probe.error}</p>
-                <button type="button" onClick={() => api(`/api/jobs/${jobId}/setup`, { method: "POST", json: { action: "probe" } }).then(() => setData((d) => (d ? { ...d, probe: { state: "running" } } : d)))} className={cn(btn, "mt-3")}>
-                  <RotateCcw aria-hidden="true" /> Try again
-                </button>
-              </div>
-            ) : probeRunning || !frames.length ? (
-              <div className="grid aspect-video place-items-center rounded-xl bg-raised text-[13px] text-muted-foreground">
-                <span className="flex items-center gap-2">
-                  <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> Looking at your video and finding the facecam…
-                </span>
-              </div>
-            ) : (
-              <FrameEditor frames={frames} index={frame} onIndex={setFrame} detected={detected} style={eff} set={set} />
-            )}
-          </Card>
-
-          <Card n={2} title="Layout" sub="How the wide stream becomes a tall short.">
-            <LayoutControls style={eff} set={set} hasCam={hasCam} />
-          </Card>
-
-          <Card n={3} title="Length and number" sub="The AI picks moments between these lengths, starting right on the action.">
-            <div className="grid gap-3.5 sm:grid-cols-2">
-              <div className="grid gap-1.5">
-                <span className="flex justify-between text-xs font-medium text-muted-foreground">
-                  <span>Length of each short</span>
-                  <b className="font-mono text-foreground">
-                    {minLen}–{maxLen} s
-                  </b>
-                </span>
-                <div className="relative h-[26px] [&_input]:pointer-events-none [&_input]:absolute [&_input]:inset-0 [&_input]:w-full [&_input]:appearance-none [&_input]:bg-transparent [&_input]:accent-moment [&_input::-moz-range-thumb]:pointer-events-auto [&_input::-webkit-slider-thumb]:pointer-events-auto">
-                  <span className="absolute inset-x-0 top-[11px] h-1 rounded bg-hover" />
-                  <span className="absolute top-[11px] h-1 rounded bg-moment" style={{ left: `${pct(minLen)}%`, width: `${pct(maxLen) - pct(minLen)}%` }} />
-                  <input type="range" min={15} max={180} step={5} value={minLen} aria-label="Shortest" onChange={(e) => setMinLen(Math.min(Number(e.target.value), maxLen - 10))} />
-                  <input type="range" min={15} max={180} step={5} value={maxLen} aria-label="Longest" onChange={(e) => setMaxLen(Math.max(Number(e.target.value), minLen + 10))} />
-                </div>
-              </div>
-              <label className="grid gap-1.5">
-                <span className="text-xs font-medium text-muted-foreground">How many shorts</span>
-                <select value={count} onChange={(e) => setCount(e.target.value)} className={field}>
-                  {COUNTS.map(([v, l]) => (
-                    <option key={v} value={v}>
-                      {l}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          </Card>
-
-          <Card n={4} title="Captions" sub="The words that are said, on screen. See it change on the right.">
-            <CaptionControls style={eff} set={set} />
-          </Card>
-
-          <Card n={5} title="Opening line" sub={`A short line the AI writes for each short, shown for the first seconds.${mention ? ` It always names ${mention} for this campaign.` : ""}`}>
-            <HookControls style={eff} set={set} example={hook} onExample={setHook} />
-          </Card>
-
-          <Card n={6} title="Extras" sub="Small things that keep people watching.">
-            <ExtraControls style={eff} set={set} noLogos={!!meta.campaign} />
-          </Card>
-
-          <div className="sticky bottom-[72px] z-30 mt-1 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border-strong bg-raised/95 py-3 pr-3 pl-[18px] shadow-[0_20px_60px_rgb(0_0_0/0.55)] backdrop-blur md:bottom-3.5">
-            <span className="text-[13px] text-muted-foreground">
-              <b className="text-foreground">{Number(count) ? `${count} shorts` : `About ${n} shorts`}</b>, {minLen}–{maxLen} s each · about {minutes} minutes
-            </span>
-            <span className="flex gap-2 max-sm:w-full max-sm:[&>*]:flex-1">
-              <Link href="/projects" className={cn(btn, btnGhost)}>
-                Later
-              </Link>
-              <button type="button" onClick={start} disabled={starting || probeRunning} className={cn(btn, btnCta, btnLg)}>
-                {starting ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : <Sparkles aria-hidden="true" />}
-                {Number(count) ? `Make ${count} shorts` : "Make shorts"}
-              </button>
-            </span>
-          </div>
-        </div>
-
-        <aside className="grid justify-items-center gap-3 max-lg:order-first lg:sticky lg:top-6">
-          <div className="flex w-full max-w-[288px] gap-2 lg:max-w-none">
+      <div className="grid items-start gap-8 lg:grid-cols-[340px_minmax(0,1fr)]">
+        {/* Left: the short as it will look, the 5-second test and saved looks */}
+        <div className="grid justify-items-center gap-3 lg:sticky lg:top-5">
+          <div className="flex w-full max-w-[320px] gap-2">
             <select
               value={preset}
               aria-label="Saved look"
@@ -279,17 +206,27 @@ export function SetupView({ jobId, meta, onStarted }: { jobId: string; meta: Job
               ))}
             </select>
             <button type="button" onClick={savePreset} className={btn}>
-              Save
+              Save look
             </button>
           </div>
 
           {testing === "showing" && data?.test?.file ? (
-            <video key={data.test.file} src={`/api/jobs/${jobId}/files/${data.test.file}`} autoPlay loop playsInline controls className="h-[512px] w-[288px] rounded-[26px] border border-border-strong bg-black object-cover" />
+            <video key={data.test.file} src={`/api/jobs/${jobId}/files/${data.test.file}`} autoPlay loop playsInline controls className="aspect-[9/16] w-[320px] rounded-[26px] border border-border-strong bg-black object-cover" />
           ) : (
-            <PhonePreview style={eff} frame={frames[frame]?.url ?? null} cam={eff.nocam ? null : detected} hook={hook} />
+            <PhonePreview
+              style={eff}
+              frame={frames[frame]?.url ?? null}
+              cam={eff.nocam ? null : detected}
+              hook={hook}
+              width={320}
+              selected={sel}
+              onSelect={pick}
+              onCaptionY={(y) => set((s) => ({ ...s, captions: { ...s.captions, y } }))}
+              onHookY={(y) => set((s) => ({ ...s, hook: { ...s.hook, pos: "custom", y } }))}
+            />
           )}
 
-          <div className="grid w-[288px] gap-2" aria-live="polite">
+          <div className="grid w-[320px] gap-2" aria-live="polite">
             {testing === "making" && !testDone && !testFailed ? (
               <>
                 <div className="h-1.5 overflow-hidden rounded-full bg-hover">
@@ -304,7 +241,7 @@ export function SetupView({ jobId, meta, onStarted }: { jobId: string; meta: Job
             ) : testing === "showing" ? (
               <>
                 <button type="button" onClick={() => setTesting("idle")} className={btn}>
-                  Back to live preview
+                  Back to the preview
                 </button>
                 <p className="text-center text-xs text-muted-foreground">This is the real result. Happy? Make the shorts.</p>
               </>
@@ -314,12 +251,92 @@ export function SetupView({ jobId, meta, onStarted }: { jobId: string; meta: Job
                   <Play aria-hidden="true" /> Make a 5-second test
                 </button>
                 <p className={cn("text-center text-xs", testFailed ? "text-bad" : "text-muted-foreground")}>
-                  {testFailed ? data?.test?.error : "Renders a real sample of this frame's moment with these settings, about 30 seconds."}
+                  {testFailed ? data?.test?.error : "Click anything on the preview to change it; drag the opening line or captions to move them."}
                 </p>
               </>
             )}
           </div>
-        </aside>
+        </div>
+
+        {/* Right: one tool at a time */}
+        <div className="min-w-0">
+          <ToolBar tools={["layout", "hook", "cap", "time", "fx"]} labels={{ time: "Length" }} active={tool} onPick={(t) => { setTool(t); setSel(t === "hook" ? "hook" : t === "cap" ? "cap" : t === "layout" ? "cam" : null); }} />
+          {tool === "layout" && (
+            <LayoutPanel
+              style={eff}
+              set={set}
+              hasCam={hasCam}
+              who={who}
+              camEditor={
+                <div>
+                  <span className="mb-2 block text-xs font-semibold text-muted-foreground">Facecam box: we look for it automatically. Drag to move, drag a corner to resize, and check another picture.</span>
+                  {probe?.state === "failed" ? (
+                    <div className="rounded-xl border bg-raised p-4 text-[13px]">
+                      <p className="text-bad">{probe.error}</p>
+                      <button type="button" onClick={() => api(`/api/jobs/${jobId}/setup`, { method: "POST", json: { action: "probe" } }).then(() => setData((d) => (d ? { ...d, probe: { state: "running" } } : d)))} className={cn(btn, "mt-3")}>
+                        <RotateCcw aria-hidden="true" /> Try again
+                      </button>
+                    </div>
+                  ) : probeRunning || !frames.length ? (
+                    <div className="grid aspect-video place-items-center rounded-xl bg-raised text-[13px] text-muted-foreground">
+                      <span className="flex items-center gap-2">
+                        <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> Looking at your video and finding the facecam…
+                      </span>
+                    </div>
+                  ) : (
+                    <FrameEditor frames={frames} index={frame} onIndex={setFrame} detected={detected} style={eff} set={set} />
+                  )}
+                </div>
+              }
+            />
+          )}
+          {tool === "hook" && <HookPanel style={eff} set={set} text={hook} onText={setHook} frame={frames[frame]?.url ?? null} mention={mention} />}
+          {tool === "cap" && <CaptionPanel style={eff} set={set} frame={frames[frame]?.url ?? null} who={who} />}
+          {tool === "time" && (
+            <Panel title="Length and number" lead="The AI picks moments between these lengths, starting right on the action.">
+              <div className="grid gap-1.5">
+                <span className="flex justify-between text-xs font-semibold text-muted-foreground">
+                  <span>Length of each short</span>
+                  <b className="font-mono text-foreground">
+                    {minLen}–{maxLen} s
+                  </b>
+                </span>
+                <div className="relative h-[26px] [&_input]:pointer-events-none [&_input]:absolute [&_input]:inset-0 [&_input]:w-full [&_input]:appearance-none [&_input]:bg-transparent [&_input]:accent-moment [&_input::-moz-range-thumb]:pointer-events-auto [&_input::-webkit-slider-thumb]:pointer-events-auto">
+                  <span className="absolute inset-x-0 top-[11px] h-1 rounded bg-hover" />
+                  <span className="absolute top-[11px] h-1 rounded bg-moment" style={{ left: `${pct(minLen)}%`, width: `${pct(maxLen) - pct(minLen)}%` }} />
+                  <input type="range" min={15} max={180} step={5} value={minLen} aria-label="Shortest" onChange={(e) => setMinLen(Math.min(Number(e.target.value), maxLen - 10))} />
+                  <input type="range" min={15} max={180} step={5} value={maxLen} aria-label="Longest" onChange={(e) => setMaxLen(Math.max(Number(e.target.value), minLen + 10))} />
+                </div>
+              </div>
+              <label className="grid gap-1.5">
+                <span className="text-xs font-semibold text-muted-foreground">How many shorts</span>
+                <select value={count} onChange={(e) => setCount(e.target.value)} className={field}>
+                  {COUNTS.map(([v, l]) => (
+                    <option key={v} value={v}>
+                      {l}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </Panel>
+          )}
+          {tool === "fx" && <EffectsPanel style={eff} set={set} noLogos={!!meta.campaign} />}
+
+          <div className="sticky bottom-[72px] z-30 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border-strong bg-raised/95 py-3 pr-3 pl-[18px] shadow-[0_20px_60px_rgb(0_0_0/0.55)] backdrop-blur md:bottom-3.5">
+            <span className="text-[13px] text-muted-foreground">
+              <b className="text-foreground">{Number(count) ? `${count} shorts` : `About ${n} shorts`}</b>, {minLen}–{maxLen} s each · about {minutes} minutes
+            </span>
+            <span className="flex gap-2 max-sm:w-full max-sm:[&>*]:flex-1">
+              <Link href="/projects" className={cn(btn, btnGhost)}>
+                Later
+              </Link>
+              <button type="button" onClick={start} disabled={starting || probeRunning} className={cn(btn, btnCta, btnLg)}>
+                {starting ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : <Sparkles aria-hidden="true" />}
+                {Number(count) ? `Make ${count} shorts` : "Make shorts"}
+              </button>
+            </span>
+          </div>
+        </div>
       </div>
       <Toast msg={toast.msg} />
     </div>

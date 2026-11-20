@@ -51,7 +51,7 @@ def skin_share(frames: np.ndarray, box: dict) -> float:
 def sample_frames(duration: float, input_for, n: int = 16) -> np.ndarray:
     """input_for(t) returns the FFmpeg input arguments that seek to second t."""
     times = np.linspace(duration * 0.08, duration * 0.92, n)
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=8) as pool:
         frames = [f for f in pool.map(lambda t: grab(input_for(float(t))), times) if f is not None]
     return np.stack(frames) if len(frames) >= 6 else np.empty((0, H, W))
 

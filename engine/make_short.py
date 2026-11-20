@@ -114,12 +114,25 @@ def layout_filter(width: int, height: int, style: dict, box: dict | None, src: s
     head = f"{src}fps={FPS},setsar=1"
     if lay in ("top", "bottom"):
         cam_h = even(oh * style["camPct"] / 100)
-        game_h = oh - cam_h
+        gap_h = even(oh * style.get("gap", 0) / 100) if style.get("gap", 0) >= 1 else 0
+        game_h = oh - cam_h - gap_h
         cx, cy, cw, ch = fit(*cam, ow / cam_h)
-        f = (f"{head},split=2[a][b];[a]crop={cw}:{ch}:{cx}:{cy},scale={ow}:{cam_h}:flags=lanczos{zoom_filter(z, ow, cam_h)}[cam];"
+        n = 3 if gap_h and style.get("gapStyle") == "blur" else 2
+        f = (f"{head},split={n}[a][b]{'[c]' if n == 3 else ''};[a]crop={cw}:{ch}:{cx}:{cy},scale={ow}:{cam_h}:flags=lanczos{zoom_filter(z, ow, cam_h)}[cam];"
              f"[b]{game_crop(width, height, ow / game_h, style['focus'])},scale={ow}:{game_h}:flags=lanczos[game];")
-        f += "[cam][game]vstack=inputs=2[v0]" if lay == "top" else "[game][cam]vstack=inputs=2[v0]"
-        return f, {"cover": (cam_h, game_h) if lay == "top" else (0, game_h), "hook_y": int(cam_h * k) - 40 if lay == "top" else 220}
+        if gap_h:
+            # The space between facecam and gameplay: a calm band where the opening line sits.
+            if n == 3:
+                f += f"[c]scale={ow // 4}:{max(8, even(gap_h / 4))},gblur=sigma=6,scale={ow}:{gap_h},eq=brightness=-0.3[gp];"
+            else:
+                col = "black" if style.get("gapStyle") != "color" else "0x" + style.get("gapColor", "#ff7448")[1:]
+                f += f"color=c={col}:s={ow}x{gap_h}:r={FPS}[gp];"
+            order = "[cam][gp][game]" if lay == "top" else "[game][gp][cam]"
+            f += f"{order}vstack=inputs=3:shortest=1[v0]"
+        else:
+            f += "[cam][game]vstack=inputs=2[v0]" if lay == "top" else "[game][cam]vstack=inputs=2[v0]"
+        seam = cam_h + gap_h / 2 if lay == "top" else game_h + gap_h / 2
+        return f, {"cover": (cam_h + gap_h, game_h) if lay == "top" else (0, game_h), "gap_y": int(seam * k)}
     if lay == "pip":
         cx, cy, cw, ch = cam
         pw = even(ow * style["pipSize"] / 100)
@@ -130,14 +143,14 @@ def layout_filter(width: int, height: int, style: dict, box: dict | None, src: s
         f = (f"{head},split=2[a][b];[b]{game_crop(width, height, ow / oh, style['focus'])},scale={ow}:{oh}:flags=lanczos[g];"
              f"[a]crop={cw}:{ch}:{cx}:{cy},scale={pw}:{ph}:flags=lanczos{zoom_filter(z, pw, ph)},pad={pw + 12}:{ph + 12}:6:6:white[c];"
              f"[g][c]overlay={x}:{y}[v0]")
-        return f, {"cover": (0, oh), "hook_y": int((y + ph + 40) * k) if style["pipCorner"][0] == "t" else 260}
+        return f, {"cover": (0, oh), "gap_y": int((y + ph + 70) * k) if style["pipCorner"][0] == "t" else 300}
     if lay == "full":
         f = (f"{head},split=2[a][b];[a]scale={ow}:{oh}:force_original_aspect_ratio=increase,crop={ow}:{oh},"
              f"scale={ow // 8}:{oh // 8},boxblur=6:2,scale={ow}:{oh},eq=brightness=-0.05[bg];"
              f"[b]scale={ow}:-2:flags=lanczos[fg];[bg][fg]overlay=0:(H-h)/2[v0]")
-        return f, {"cover": (0, oh), "hook_y": 430}
+        return f, {"cover": (0, oh), "gap_y": 470}
     f = f"{head},{game_crop(width, height, ow / oh, style['focus'])},scale={ow}:{oh}:flags=lanczos{zoom_filter(z, ow, oh)}[v0]"
-    return f, {"cover": (0, oh), "hook_y": 260}
+    return f, {"cover": (0, oh), "gap_y": 300}
 
 
 DEVANAGARI = re.compile(r"[\u0900-\u097F]")
@@ -220,7 +233,7 @@ def clean(text: str) -> str:
     return text.replace("{", "").replace("}", "").replace("\\", "")
 
 
-def build_ass(words: list[dict], path: Path, hook: str | None, style: dict, hook_y: int = 600) -> None:
+def build_ass(words: list[dict], path: Path, hook: str | None, style: dict, gap_y: int = 600, total: float | None = None) -> None:
     """Captions and opening line in the chosen look. Positions are in a 1080x1920 canvas."""
     c, h = style["captions"], style["hook"]
     font = FONTS[c["font"]]
@@ -228,9 +241,14 @@ def build_ass(words: list[dict], path: Path, hook: str | None, style: dict, hook
     cap_y = round(1920 * c["y"] / 100)
     outline = 7 if c["outline"] else 0
     white, hl = ass_color(c["color"]), ass_color(c["hl"])
-    hook_back = {"white": "&H00FFFFFF", "yellow": ass_color("#ffd23f"), "plain": "&H00000000"}[h["style"]]
-    hook_text = "&H00FFFFFF" if h["style"] == "plain" else "&H00000000"
-    hook_border = 1 if h["style"] == "plain" else 3
+    # Opening line: a box (colour + see-through) or, without a box, outlined text.
+    boxed = h["bg"] is not None
+    hook_back = ass_color(h["bg"], round(h["op"] / 100 * 255)) if boxed else "&H00000000"
+    hook_text = ass_color(h["fg"])
+    hook_border = 3 if boxed else 1
+    hook_font = FONTS[h["font"]]
+    hook_size = round(h["size"] * 3.75)
+    hook_y = {"gap": gap_y, "top": 175}.get(h["pos"], round(1920 * h["y"] / 100))
     head = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
@@ -241,7 +259,7 @@ WrapStyle: 0
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Cap,{font},{size},{white},{white},&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,{outline},{3 if outline else 2},8,60,60,{cap_y},1
 Style: Simple,{font},{round(size * 0.72)},{white},{white},&H00000000,&H99000000,0,0,0,0,100,100,0,0,3,14,0,8,80,80,{cap_y},1
-Style: Hook,Montserrat Black,62,{hook_text},{hook_text},{hook_back},{hook_back},0,0,0,0,100,100,0,0,{hook_border},{18 if hook_border == 3 else 6},0,8,90,90,{hook_y},1
+Style: Hook,{hook_font},{hook_size},{hook_text},{hook_text},{hook_back},{hook_back},0,0,0,0,100,100,0,0,{hook_border},{18 if boxed else 6},0,5,90,90,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -279,14 +297,17 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             continue
         lines.append(f"Dialogue: 0,{ass_time(s)},{ass_time(e)},{'Simple' if c['style'] == 'box' else 'Cap'},,0,0,0,,{text}")
     if hook and h["on"]:
-        lines.append(f"Dialogue: 1,{ass_time(0)},{ass_time(h['sec'])},Hook,,0,0,0,,{clean(hook)}")
+        end = total if h["show"] == "all" and total else h["sec"]
+        # Centred on its spot (an5 + pos), so a two-line opening line stays in the middle of the gap.
+        lines.append(f"Dialogue: 1,{ass_time(0)},{ass_time(end)},Hook,,0,0,0,,{{\\an5\\pos(540,{hook_y})}}{clean(hook)}")
     path.write_text(head + "\n".join(lines) + "\n", encoding="utf-8")
 
 
 def render_short(video: Path | None, start: float, length: float, out_dir: Path, name: str, key: str, transcript: dict,
                  hook: str | None = None, layout: str = "top-right", remote: dict | None = None, box: dict | None = None,
                  captions: str = "bold", words_override: list[dict] | None = None, language: str = "hi",
-                 style: dict | None = None, peak: float | None = None, zooms: list[tuple[float, float]] | None = None) -> dict:
+                 style: dict | None = None, peak: float | None = None, zooms: list[tuple[float, float]] | None = None,
+                 base: float = 0.0) -> dict:
     """Make one finished short. Returns the caption words (times from the moment's start) and timings.
 
     remote: direct stream addresses from fetch.remote_source(); FFmpeg then reads only this
@@ -295,6 +316,7 @@ def render_short(video: Path | None, start: float, length: float, out_dir: Path,
     style: the look (style.py); without it the old layout/captions options are used.
     peak: second (from start) of the biggest moment, shown first when style["flash"] is on.
     zooms: loud windows (seconds from start) for the facecam push-in when style["zoom"] is on.
+    base: video time of the local file's first second (a downloaded piece of a long stream starts hours in).
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     style = normalize(style, layout, captions)
@@ -338,7 +360,7 @@ def render_short(video: Path | None, start: float, length: float, out_dir: Path,
     else:
         assert video is not None
         for n, (s, d) in enumerate(segments):
-            inputs += ["-ss", str(s), "-t", str(d), "-i", str(video)]
+            inputs += ["-ss", f"{max(0.0, s - base):.3f}", "-t", str(d), "-i", str(video)]
             pairs.append((n, n))
         size = video_size(video)
     if len(pairs) > 1:
@@ -349,7 +371,7 @@ def render_short(video: Path | None, start: float, length: float, out_dir: Path,
     # One copy of the source goes to a full-size picture of this moment (the Edit tab's live preview).
     pre += f"{src}split=2[src0][src1];"
     lf, where = layout_filter(*size, style, box, "[src0]", layout, zoom_windows)
-    build_ass(shown, ass, hook, style, where["hook_y"])
+    build_ass(shown, ass, hook, style, where["gap_y"], total)
 
     t = time.perf_counter()
     cover_y, cover_h = where["cover"]

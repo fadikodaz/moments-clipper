@@ -121,3 +121,165 @@ def remote_source(url: str) -> dict:
     headers = "".join(f"{k}: {v}\r\n" for k, v in (video.get("http_headers") or {}).items())
     return {"video": video["url"], "audio": audio["url"] if audio else None, "headers": headers,
             "width": int(video.get("width") or 1280), "height": int(video.get("height") or 720)}
+
+
+# ---------------- pieces: only the seconds we need, many small requests at once ----------------
+# YouTube also serves every video as an HLS playlist of 5-second pieces. One connection is often slowed
+# down to a crawl; 8 pieces at a time come in 10-15x faster. A "piece" here is a short local file
+# covering a time range of the video, with "base" = the video time of its first frame.
+
+import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
+import requests
+
+_hls_lock = threading.Lock()
+_hls_info: dict[str, tuple[float, dict]] = {}
+WORKERS = 8
+
+
+def _formats(url: str) -> dict | None:
+    """HLS video (720p H.264 or the best below) and audio formats, cached for 2 hours (addresses expire later)."""
+    with _hls_lock:
+        hit = _hls_info.get(url)
+        if hit and time.time() - hit[0] < 7200:
+            return hit[1]
+    r = subprocess.run(BASE + ["-J", url], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    if r.returncode or not r.stdout.strip():
+        raise FetchError(friendly(r.stderr))
+    data = json.loads(r.stdout)
+    hls = [f for f in data.get("formats", []) if str(f.get("protocol", "")).startswith("m3u8")]
+    vids = sorted((f for f in hls if str(f.get("vcodec", "")).startswith("avc1") and (f.get("height") or 0) <= 720),
+                  key=lambda f: (f.get("height") or 0, -(f.get("fps") or 0)), reverse=True)
+    auds = {f["format_id"]: f for f in hls if f.get("vcodec") in (None, "none")}
+    out = None
+    if vids and auds:
+        low = [f for f in vids if (f.get("height") or 0) <= 360]
+        out = {"video": vids[0], "video_lo": min(low, key=lambda f: abs((f.get("height") or 0) - 240)) if low else vids[-1], "audio_hi": auds.get("234") or next(iter(auds.values())), "audio_lo": auds.get("233") or next(iter(auds.values())),
+               "duration": float(data.get("duration") or 0)}
+    with _hls_lock:
+        _hls_info[url] = (time.time(), out)
+    return out
+
+
+def _segments(fmt: dict) -> list[tuple[float, float, str]]:
+    """(start second, length, address) of every piece in a playlist."""
+    for attempt in range(3):
+        try:
+            r = requests.get(fmt["url"], headers=fmt.get("http_headers") or {}, timeout=60)
+            r.raise_for_status()
+            break
+        except requests.RequestException:
+            if attempt == 2:
+                raise FetchError("Couldn't read the video's piece list from YouTube.")
+            time.sleep(3)
+    lines, out, t = r.text.splitlines(), [], 0.0
+    for i, line in enumerate(lines):
+        if line.startswith("#EXTINF:") and i + 1 < len(lines):
+            d = float(line.split(":", 1)[1].split(",")[0])
+            out.append((t, d, lines[i + 1].strip()))
+            t += d
+    if not out:
+        raise FetchError("YouTube sent an empty piece list.")
+    return out
+
+
+def _fetch_all(segs: list[tuple[float, float, str]], out: Path, on_progress=None) -> None:
+    """Download pieces in parallel and join them in order into one file."""
+    parts: list[bytes | None] = [None] * len(segs)
+    done = 0
+    lock = threading.Lock()
+
+    def get(i: int) -> None:
+        nonlocal done
+        for attempt in range(5):
+            try:
+                r = requests.get(segs[i][2], timeout=60)
+                r.raise_for_status()
+                parts[i] = r.content
+                break
+            except requests.RequestException:
+                time.sleep(1 + attempt * 2)
+        with lock:
+            done += 1
+            if on_progress:
+                on_progress(done / len(segs))
+
+    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        list(pool.map(get, range(len(segs))))
+    if any(p is None for p in parts):
+        raise FetchError("Some pieces of the video couldn't be downloaded. Try again.")
+    with out.open("wb") as f:
+        for p in parts:
+            f.write(p)  # type: ignore[arg-type]
+
+
+def download_range(url: str, start: float, end: float, out: Path, video: bool = True, audio: str = "hi", on_progress=None) -> dict | None:
+    """Only the seconds start..end of a linked video, fetched in parallel pieces.
+    Returns {"file": Path, "base": video time of the file's first second}, or None if YouTube has no pieces for it."""
+    fmts = _formats(url)
+    if not fmts:
+        return None
+    out.parent.mkdir(parents=True, exist_ok=True)
+    pick = lambda segs: [s for s in segs if s[0] + s[1] > start and s[0] < end]
+    a_segs = pick(_segments(fmts["audio_hi" if audio == "hi" else "audio_lo"]))
+    if not a_segs:
+        raise FetchError("That part of the video is outside its length.")
+    tmp = out.with_name(out.stem + ".parts")
+    tmp.mkdir(exist_ok=True)
+    try:
+        if not video:
+            _fetch_all(a_segs, tmp / "a.ts", on_progress)
+            cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(tmp / "a.ts"), "-c", "copy", "-bsf:a", "aac_adtstoasc", str(out)]
+            base = a_segs[0][0]
+        else:
+            v_segs = pick(_segments(fmts["video"]))
+            n_v, n_a = len(v_segs), len(a_segs)
+            _fetch_all(v_segs, tmp / "v.ts", (lambda f: on_progress(f * n_v / (n_v + n_a))) if on_progress else None)
+            _fetch_all(a_segs, tmp / "a.ts", (lambda f: on_progress((n_v + f * n_a) / (n_v + n_a))) if on_progress else None)
+            base = v_segs[0][0]
+            # Audio pieces can start at a slightly different second than video pieces: line them up.
+            shift = a_segs[0][0] - base
+            cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(tmp / "v.ts"), "-itsoffset", f"{shift:.3f}", "-i", str(tmp / "a.ts"),
+                   "-map", "0:v:0", "-map", "1:a:0", "-c", "copy", "-bsf:a", "aac_adtstoasc", "-movflags", "+faststart", str(out)]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode:
+            raise FetchError(f"Joining the downloaded pieces failed: {r.stderr[-300:]}")
+    finally:
+        for f in tmp.glob("*"):
+            f.unlink(missing_ok=True)
+        tmp.rmdir()
+    return {"file": out, "base": round(base, 3)}
+
+
+def segment_frame_input(url: str, t: float, quality: str = "hi", cache: Path | None = None) -> list[str]:
+    """FFmpeg input arguments for a single picture at second t, from the one 5-second piece that holds it
+    (downloaded once into cache). quality "lo" (240p) is plenty for finding the facecam."""
+    fmts = _formats(url)
+    if not fmts:
+        raise FetchError("No pieces available for this video.")
+    key = "video" if quality == "hi" else "video_lo"
+    fmt = fmts.get(key) or fmts["video"]
+    with _hls_lock:
+        segs = _seg_cache.get(fmt["url"])
+    if segs is None:
+        segs = _segments(fmt)
+        with _hls_lock:
+            _seg_cache[fmt["url"]] = segs
+    seg = next((s for s in segs if s[0] <= t < s[0] + s[1]), segs[-1])
+    cache = cache or Path(tempfile.gettempdir()) / "moments-pieces"
+    cache.mkdir(parents=True, exist_ok=True)
+    f = cache / f"{quality}-{int(seg[0] * 1000)}.ts"
+    if not f.exists():
+        _fetch_all([seg], f)
+    # Seek after opening (decode up to the second): exact, and works even when the piece's timestamps start late.
+    return ["-i", str(f), "-ss", f"{max(0.0, min(t - seg[0], seg[1] - 0.2)):.2f}"]
+
+
+_seg_cache: dict[str, list] = {}
+
+
+def has_pieces(url: str) -> bool:
+    """True when YouTube offers this video in 5-second pieces (fast parallel download)."""
+    return _formats(url) is not None

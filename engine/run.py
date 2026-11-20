@@ -31,7 +31,7 @@ from pathlib import Path
 
 from make_short import LAYOUTS, render_short, roman_line
 from facecam import find_facecam
-from fetch import FetchError, download_audio, download_video, info, is_url, remote_source
+from fetch import FetchError, download_audio, download_range, download_video, has_pieces, info, is_url, remote_source, segment_frame_input
 from pick import pick
 from signals import extract_audio, fmt, loudness_per_second, score_seconds
 from style import normalize
@@ -41,7 +41,8 @@ from transcribe import load_key, prompt_for, scrub, transcribe
 WEIGHTS = {1: 0.03, 2: 0.22, 3: 0.01, 4: 0.19, 5: 0.55}
 LINK_WEIGHTS = {1: 0.15, 2: 0.18, 3: 0.01, 4: 0.16, 5: 0.50}  # links spend time downloading the audio first
 MAX_LINK_SECONDS = 24 * 3600
-MAX_PART_SECONDS = 4 * 3600  # one project reads at most 4 hours; longer streams are made in parts (--from/--to)
+MAX_PART_SECONDS = 4 * 3600
+PIECE_MARGIN = 20  # extra seconds downloaded around each moment, so edits can move its start and end  # one project reads at most 4 hours; longer streams are made in parts (--from/--to)
 LABELS = {1: "Reading the audio", 2: "Listening to what you said", 3: "Measuring the action", 4: "Picking the best moments", 5: "Making your shorts"}
 
 
@@ -122,6 +123,7 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
     t_all = time.perf_counter()
     link = is_url(source)
     upload: Path | None = None
+    audio_base: float | None = None  # video time where the downloaded audio starts (links, piece download)
     t = time.perf_counter()
     status.write("running", 1, 0, "Checking the link" if link else "")
 
@@ -139,7 +141,24 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
         title = meta.get("title") or "YouTube video"
         progress = lambda f: status.write("running", 1, f * 0.9, f"Downloading the audio from YouTube, {round(f * 100)}%")
         retry = lambda n, m: status.write("running", 1, 0, f"YouTube refused, trying again ({n} of {m})")
-        if part:
+        # Fastest: only the chosen part's sound, many small pieces at once. Kept with its start time for retries.
+        lo, hi = part if part else (0.0, source_sec or MAX_PART_SECONDS)
+        saved = job_dir / "source_audio.json"
+        if saved.exists() and (job_dir / "source_audio.m4a").exists():
+            audio_base = float(json.loads(saved.read_text(encoding="utf-8"))["base"])
+        elif part and (job_dir / "source_audio.m4a").exists():
+            audio_base = float(part[0])  # made by an earlier version: cut exactly at the part's start
+        else:
+            try:
+                got = download_range(source, lo, hi, job_dir / "source_audio.m4a", video=False, audio="lo", on_progress=progress)
+                if got:
+                    audio_base = float(got["base"])
+                    saved.write_text(json.dumps({"base": audio_base}), encoding="utf-8")
+            except FetchError as e:
+                print(f"    piece download failed, using the full download: {e}", flush=True)
+        if audio_base is not None:
+            video = job_dir / "source_audio.m4a"
+        elif part:
             # The whole stream's sound is kept once in a shared folder, so other parts of it start at once.
             cache = job_dir.parent / "_cache"
             have = [f for f in cache.glob(f"{meta['id']}.*") if f.suffix not in (".part", ".ytdl")]
@@ -156,7 +175,7 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
         if part:
             status.write("running", 1, 0.2, "Cutting out your chosen part")
         video = trim_audio(upload, part, upload.parent / "source_part.m4a") if part else upload
-    offset = float(part[0]) if part else 0.0
+    offset = audio_base if audio_base is not None else (float(part[0]) if part else 0.0)
     sig = video.parent / "signals"
     sig.mkdir(exist_ok=True)
 
@@ -242,7 +261,7 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
             "capWords": r["words"],  # timed caption words, so they can be fixed and the short made again
             "sub": {k: sc.get(k) for k in ("hook", "action", "reaction", "clarity")},
             "layout": "facecam" if box or layout not in ("auto", "none") else "gameplay", "captions": captions,
-            "peakSec": p.get("peak"), "zoomSec": p.get("zoomSec", []), "style": r.get("style"), "frame": r.get("frame"),
+            "peakSec": p.get("peak"), "zoomSec": p.get("zoomSec", []), "style": r.get("style"), "frame": r.get("frame"), "piece": p.get("piece"),
         }
 
     def save(final: bool) -> None:
@@ -265,19 +284,28 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
     status.write("running", 5, 0, f"0 of {len(picks)} ready")
     t = time.perf_counter()
     # Where the shorts are cut from: the uploaded file, or (for links) YouTube's servers directly.
-    mode: dict = {"video": upload, "remote": None}
+    mode: dict = {"video": upload, "remote": None, "pieces": False}
+    pieces_dir = out_dir.parent / "pieces"
     if link:
         status.write("running", 5, 0, "Connecting to YouTube")
+        # Preferred: download each moment (with some extra seconds for edits) in parallel pieces, cut locally.
         try:
-            mode["remote"] = remote_source(source)
+            mode["pieces"] = has_pieces(source)
         except FetchError as e:
-            print(f"    direct cutting unavailable: {e}", flush=True)
+            print(f"    piece download unavailable: {e}", flush=True)
+        if not mode["pieces"]:
+            try:
+                mode["remote"] = remote_source(source)
+            except FetchError as e:
+                print(f"    direct cutting unavailable: {e}", flush=True)
 
     # Find the facecam once, from frames spread over the whole video.
     box = style["cam"]  # drawn by the user on the set-up screen: no need to search
     if not box and style["layout"] in ("top", "bottom", "pip") and not style["nocam"] and layout != "none":
         status.write("running", 5, 0, "Finding your facecam")
-        if mode["remote"]:
+        if mode["pieces"]:
+            input_for = lambda t: segment_frame_input(source, t + offset, "lo", pieces_dir / "frames")
+        elif mode["remote"]:
             rs = mode["remote"]
             input_for = lambda t: ["-ss", str(t + offset), "-headers", rs["headers"], "-i", rs["video"]]
         else:
@@ -297,11 +325,21 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
         res = None
         for attempt in (1, 2):  # one retry: a single failed cut should not cost the whole job
             try:
-                res = render_short(mode["video"], p["start"], p["end"] - p["start"], out_dir, name, key, transcript, p.get("hook"), layout, mode["remote"], box, captions,
+                video_in, remote_in, base = mode["video"], mode["remote"], 0.0
+                if mode["pieces"]:
+                    # This moment plus PIECE_MARGIN seconds each side (room for edits later), fetched in parallel.
+                    lo_t = max(0.0, p["start"] - PIECE_MARGIN)
+                    hi_t = min(source_sec or p["end"] + PIECE_MARGIN, p["end"] + PIECE_MARGIN)
+                    got = download_range(source, lo_t, hi_t, pieces_dir / f"{name}.mp4")
+                    if not got:
+                        raise RuntimeError("No pieces available for this video.")
+                    video_in, base = got["file"], float(got["base"])
+                    p["piece"] = {"file": got["file"].name, "base": base, "end": hi_t}
+                res = render_short(video_in, p["start"], p["end"] - p["start"], out_dir, name, key, transcript, p.get("hook"), layout, remote_in, box, captions,
                                    language=language, style=style, peak=p["peak"] - p["start"],
-                                   zooms=[(z0 - p["start"], z1 - p["start"]) for z0, z1 in p.get("zoomSec", [])])
+                                   zooms=[(z0 - p["start"], z1 - p["start"]) for z0, z1 in p.get("zoomSec", [])], base=base)
                 break
-            except RuntimeError as e:
+            except (RuntimeError, FetchError) as e:
                 print(f"    #{p['rank']} attempt {attempt} failed: {str(e)[:300]}", flush=True)
         with lock:
             if res is None:
@@ -315,7 +353,7 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
         return res is not None
 
     rest = picks
-    if link:
+    if link and not mode["pieces"]:
         # The first short doubles as a test: if YouTube refuses partial reads, get the full video once.
         ok = mode["remote"] is not None and make(picks[0])
         if not ok:

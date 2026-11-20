@@ -14,7 +14,7 @@ import time
 import traceback
 from pathlib import Path
 
-from fetch import is_url, remote_source
+from fetch import FetchError, download_range, is_url, remote_source
 from make_short import render_short
 from transcribe import load_key
 
@@ -51,11 +51,22 @@ def main() -> None:
         length = 5.0
         step = length / len(SAMPLE)
         words = [{"text": w, "start": round(i * step, 2), "end": round((i + 0.9) * step, 2)} for i, w in enumerate(SAMPLE)]
-        remote = remote_source(a.source) if is_url(a.source) else None
+        remote, video, base = None, None if is_url(a.source) else Path(a.source), 0.0
+        if is_url(a.source):
+            try:
+                got = download_range(a.source, a.second, a.second + length, out / f"piece-test-{a.n}.mp4")
+                if got:
+                    video, base = got["file"], float(got["base"])
+            except FetchError:
+                pass
+            if not video:
+                remote = remote_source(a.source)
         name = f"test-{a.n}"
         box = json.loads(a.box) if a.box else None
-        render_short(None if remote else Path(a.source), a.second, length, out, name, load_key(), {"words": []}, a.hook,
-                     remote=remote, box=box, words_override=words, style=style, zooms=[(1.5, 3.0)], language="en")
+        render_short(video, a.second, length, out, name, load_key(), {"words": []}, a.hook,
+                     remote=remote, box=box, words_override=words, style=style, zooms=[(1.5, 3.0)], language="en", base=base)
+        if video and video.name.startswith("piece-test"):
+            video.unlink(missing_ok=True)
         (out / f"{name}.jpg").unlink(missing_ok=True)
         (out / f"{name}.frame.jpg").unlink(missing_ok=True)
         (out / f"{name}.ass").unlink(missing_ok=True)

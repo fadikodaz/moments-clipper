@@ -20,7 +20,7 @@ import time
 import traceback
 from pathlib import Path
 
-from fetch import remote_source
+from fetch import FetchError, download_range, remote_source
 from make_short import clip_caption_words, render_short
 from style import normalize
 from transcribe import load_key, scrub
@@ -163,11 +163,25 @@ def remake_one(job_dir: Path, clip_id: str, edits: dict) -> bool:
 
         # Where to cut from: the uploaded file, a full download of the link, or YouTube directly.
         video = next((p for p in sorted(job_dir.iterdir()) if VIDEO.match(p.name)), None)
-        remote = None
+        remote, base, piece = None, 0.0, clip.get("piece")
         if not video:
             if not meta.get("url"):
                 raise RuntimeError("The original video is missing, so the short can't be made again.")
-            remote = remote_source(meta["url"])
+            # The piece downloaded for this short covers 20 s either side; outside that, fetch a new one.
+            pf = job_dir / "pieces" / piece["file"] if piece else None
+            if pf and pf.exists() and piece["base"] <= new_start and new_end <= piece["end"]:
+                video, base = pf, float(piece["base"])
+            else:
+                try:
+                    lo_t, hi_t = max(0.0, new_start - 20), new_end + 20
+                    got = download_range(meta["url"], lo_t, hi_t, job_dir / "pieces" / f"{clip_id}-{int(time.time())}.mp4")
+                    if got:
+                        video, base = got["file"], float(got["base"])
+                        piece = {"file": got["file"].name, "base": base, "end": hi_t}
+                except FetchError as e:
+                    print(f"    piece download failed: {e}", flush=True)
+            if not video:
+                remote = remote_source(meta["url"])
 
         n = int(clip.get("edits", 0)) + 1
         name = re.sub(r"-e\d+$", "", Path(clip["file"]).stem) + f"-e{n}"
@@ -175,14 +189,14 @@ def remake_one(job_dir: Path, clip_id: str, edits: dict) -> bool:
         for attempt in (1, 2):  # YouTube now and then refuses one read (HTTP 403): a fresh address usually works
             try:
                 res = render_short(video, new_start, length, out, name, key, transcript, hook, layout, remote, box, captions, words_override=words,
-                                   language=language, style=style, peak=peak, zooms=zooms)
+                                   language=language, style=style, peak=peak, zooms=zooms, base=base)
                 break
             except RuntimeError as e:
                 print(f"    remake attempt {attempt} failed: {str(e)[:200]}", flush=True)
                 if attempt == 2:
                     raise
-                if remote:
-                    remote = remote_source(meta["url"])
+                if remote or (meta.get("url") and video and "pieces" in str(video)):
+                    video, base, remote = None, 0.0, remote_source(meta["url"])
 
         # Save under the new name (so browsers don't show the old cached video), then remove the old files.
         summary = json.loads((out / "clips.json").read_text(encoding="utf-8"))
@@ -190,7 +204,7 @@ def remake_one(job_dir: Path, clip_id: str, edits: dict) -> bool:
         old = [clip["file"], clip["poster"], Path(clip["file"]).with_suffix(".ass").name] + ([clip["frame"]] if clip.get("frame") else [])
         clip.update({"file": res["file"], "poster": res["poster"], "startSec": round(new_start, 2), "durSec": round(length, 2),
                      "hook": hook or "", "words": " ".join(w["text"] for w in words), "capWords": words,
-                     "layout": choice, "captions": captions, "style": res["style"], "frame": res.get("frame"), "edits": n})
+                     "layout": choice, "captions": captions, "style": res["style"], "frame": res.get("frame"), "piece": piece, "edits": n})
         write_json(out / "clips.json", summary)
         tl_file = out / "timeline.json"
         if tl_file.exists():
@@ -233,7 +247,8 @@ def main() -> None:
     out = job_dir / "clips"
     review_file = job_dir / "review.json"
     review = json.loads(review_file.read_text(encoding="utf-8")) if review_file.exists() else {}
-    ids = [c["id"] for c in json.loads((out / "clips.json").read_text(encoding="utf-8"))["clips"] if review.get(c["id"]) != "deleted"]
+    skip = set(edits.get("exclude") or [])
+    ids = [c["id"] for c in json.loads((out / "clips.json").read_text(encoding="utf-8"))["clips"] if review.get(c["id"]) != "deleted" and c["id"] not in skip]
     state = out / "remake-all.json"
     started, failed = time.time(), 0
     for n, cid in enumerate(ids):
