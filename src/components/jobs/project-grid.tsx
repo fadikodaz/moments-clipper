@@ -72,7 +72,9 @@ function ProjectCard({ job, onRename, onDelete }: { job: JobSummary; onRename: (
 
   const chip = running
     ? { dot: "bg-info", text: `Making shorts, ${Math.round(job.status.progress * 100)}%` }
-    : s === "failed" && !job.clips
+    : s === "setup"
+      ? { dot: "bg-moment", text: "Waiting for your set-up" }
+      : s === "failed" && !job.clips
       ? { dot: "bg-bad", text: "Didn't finish" }
       : s === "cancelled" && !job.clips
         ? { dot: "bg-subtle", text: "Stopped" }

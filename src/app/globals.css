@@ -2,6 +2,12 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
+/* Caption fonts: the same files the engine burns into the shorts (engine/fonts), for the live preview. */
+@font-face { font-family: "Montserrat Black"; src: url("/fonts/Montserrat-Black.ttf") format("truetype"); font-display: swap; }
+@font-face { font-family: "Anton"; src: url("/fonts/Anton-Regular.ttf") format("truetype"); font-display: swap; }
+@font-face { font-family: "Bebas Neue"; src: url("/fonts/BebasNeue-Regular.ttf") format("truetype"); font-display: swap; }
+@font-face { font-family: "Poppins ExtraBold"; src: url("/fonts/Poppins-ExtraBold.ttf") format("truetype"); font-display: swap; }
+
 @custom-variant dark (&:is(.dark *));
 
 /*
@@ -134,4 +140,10 @@
     animation-delay: 0ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* Progress bar in the short preview. */
+@keyframes prog {
+  from { width: 0; }
+  to { width: 100%; }
 }

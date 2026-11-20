@@ -2,8 +2,9 @@
 Make one finished short again with the changes from the Edit tab on the website.
 
 Usage:  python remake.py <job_dir> <clip_id> <edits.json>
-edits:  {"startDelta": -3, "endDelta": 5, "hook": "text shown first", "layout": "facecam" | "gameplay" | "full",
-         "captions": "bold" | "simple" | "none", "lines": [{"from": 0, "to": 5, "text": "fixed words"}]}
+edits:  {"startDelta": -3, "endDelta": 5, "hook": "text shown first", "style": {...style.py...},
+         "lines": [{"from": 0, "to": 5, "text": "fixed words"}]}
+        Older callers may send "layout" (facecam/gameplay/full) and "captions" (bold/simple/none) instead of style.
         "lines" fix caption words: from/to index the short's current words (clip["words"] split on spaces).
 Writes: clips/remake-<clip_id>.json while working ("running", then "done" or "failed"),
         then the new short under a new file name, updates clips.json and removes the old files.
@@ -20,6 +21,7 @@ from pathlib import Path
 
 from fetch import remote_source
 from make_short import clip_caption_words, render_short
+from style import normalize
 from transcribe import load_key
 
 MAX_SHIFT = 30          # seconds the start or end may move either way
@@ -70,8 +72,8 @@ def apply_lines(words: list[dict], lines: list[dict]) -> list[dict]:
     return out + words[i:]
 
 
-def main() -> None:
-    job_dir, clip_id, edits_file = Path(sys.argv[1]).resolve(), sys.argv[2], Path(sys.argv[3])
+def remake_one(job_dir: Path, clip_id: str, edits: dict) -> bool:
+    """Make one short again; its progress goes to clips/remake-<clip_id>.json. False if it failed."""
     out = job_dir / "clips"
     state_file = out / f"remake-{clip_id}.json"
     started = time.time()
@@ -81,7 +83,6 @@ def main() -> None:
 
     try:
         status("running")
-        edits = json.loads(edits_file.read_text(encoding="utf-8"))
         summary = json.loads((out / "clips.json").read_text(encoding="utf-8"))
         meta = json.loads((job_dir / "meta.json").read_text(encoding="utf-8"))
         clip = next((c for c in summary["clips"] if c["id"] == clip_id), None)
@@ -120,16 +121,21 @@ def main() -> None:
             tail = clip_caption_words(key, transcript, start + dur, new_end - start - dur, language)
             words += [{**w, "start": round(w["start"] + start + dur - new_start, 2), "end": round(w["end"] + start + dur - new_start, 2)} for w in tail]
 
-        # Layout: the facecam box found when the project was made is reused.
+        # Look: the edited style, else this short's own, else the project's. The facecam box found
+        # when the project was made is reused unless the user drew one.
         box = summary.get("facecam")
-        choice = edits.get("layout") or clip.get("layout") or "facecam"
-        if choice == "gameplay":
-            layout = "none"
-        elif choice == "full":
-            layout = "full"
-        else:
-            layout = "auto" if box else (summary.get("layout") if summary.get("layout") not in (None, "auto", "none", "full") else "top-right")
-        captions = edits.get("captions") if edits.get("captions") in ("bold", "simple", "none") else clip.get("captions", "bold")
+        layout = summary.get("layout") or "auto"
+        base = clip.get("style") or summary.get("style") or normalize(None, "none" if clip.get("layout") == "gameplay" else layout, clip.get("captions", "bold"))
+        style = normalize(edits.get("style") or base)
+        if not edits.get("style") and (edits.get("layout") or edits.get("captions")):
+            style["layout"] = {"facecam": "top", "gameplay": "game", "full": "full"}.get(edits.get("layout"), style["layout"])
+            style["captions"]["style"] = {"bold": "word", "simple": "box", "none": "none"}.get(edits.get("captions"), style["captions"]["style"])
+        captions = {"word": "bold", "box": "simple", "none": "none"}[style["captions"]["style"]]
+        choice = {"top": "facecam", "bottom": "facecam", "pip": "facecam", "game": "gameplay", "full": "full"}[style["layout"]]
+        # The teaser and zoom moments stay where they were in the video, as long as they are still inside.
+        peak = clip.get("peakSec")
+        peak = peak - new_start if peak is not None and new_start + 1 <= peak <= new_end - 1 else length / 2
+        zooms = [(a - new_start, b - new_start) for a, b in clip.get("zoomSec") or [] if new_start <= a and b <= new_end]
         hook = str(edits.get("hook", clip.get("hook") or "")).strip()[:80] or None
 
         # Where to cut from: the uploaded file, a full download of the link, or YouTube directly.
@@ -142,7 +148,8 @@ def main() -> None:
 
         n = int(clip.get("edits", 0)) + 1
         name = re.sub(r"-e\d+$", "", Path(clip["file"]).stem) + f"-e{n}"
-        res = render_short(video, new_start, length, out, name, key, transcript, hook, layout, remote, box, captions, words_override=words, language=language)
+        res = render_short(video, new_start, length, out, name, key, transcript, hook, layout, remote, box, captions, words_override=words, language=language,
+                           style=style, peak=peak, zooms=zooms)
 
         # Save under the new name (so browsers don't show the old cached video), then remove the old files.
         summary = json.loads((out / "clips.json").read_text(encoding="utf-8"))
@@ -150,7 +157,7 @@ def main() -> None:
         old = [clip["file"], clip["poster"], Path(clip["file"]).with_suffix(".ass").name]
         clip.update({"file": res["file"], "poster": res["poster"], "startSec": round(new_start, 2), "durSec": round(length, 2),
                      "hook": hook or "", "words": " ".join(w["text"] for w in words), "capWords": words,
-                     "layout": choice, "captions": captions, "edits": n})
+                     "layout": choice, "captions": captions, "style": res["style"], "edits": n})
         write_json(out / "clips.json", summary)
         tl_file = out / "timeline.json"
         if tl_file.exists():
@@ -170,9 +177,35 @@ def main() -> None:
         traceback.print_exc()
         msg = str(e) or e.__class__.__name__
         status("failed", "Making the short again failed while cutting the video. Try once more." if msg.startswith("FFmpeg") else msg[-400:])
-        raise SystemExit(1)
+        if isinstance(e, KeyboardInterrupt):
+            raise
+        return False
+    return True
+
+
+def main() -> None:
+    """remake.py <job_dir> <clip_id> <edits.json>, or clip_id ALL to give every short the same look
+    (only the style in the edits is used then; each short keeps its own start, end, words and opening line)."""
+    job_dir, clip_id, edits_file = Path(sys.argv[1]).resolve(), sys.argv[2], Path(sys.argv[3])
+    try:
+        edits = json.loads(edits_file.read_text(encoding="utf-8"))
     finally:
         edits_file.unlink(missing_ok=True)
+    if clip_id != "ALL":
+        raise SystemExit(0 if remake_one(job_dir, clip_id, edits) else 1)
+    out = job_dir / "clips"
+    review_file = job_dir / "review.json"
+    review = json.loads(review_file.read_text(encoding="utf-8")) if review_file.exists() else {}
+    ids = [c["id"] for c in json.loads((out / "clips.json").read_text(encoding="utf-8"))["clips"] if review.get(c["id"]) != "deleted"]
+    state = out / "remake-all.json"
+    started, failed = time.time(), 0
+    for n, cid in enumerate(ids):
+        write_json(state, {"state": "running", "done": n, "total": len(ids), "current": cid, "failed": failed, "started": started, "updated": time.time()})
+        if not remake_one(job_dir, cid, {"style": edits.get("style")}):
+            failed += 1
+    write_json(state, {"state": "done" if not failed else "failed", "done": len(ids), "total": len(ids), "failed": failed,
+                       "error": f"{failed} of {len(ids)} shorts couldn't be made again. Try those once more." if failed else None,
+                       "started": started, "updated": time.time()})
 
 
 def fmt_s(t: float) -> str:

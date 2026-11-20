@@ -34,7 +34,11 @@ function hashtags(s: Short, n: number, c: CampaignRules) {
 /** Makes sure the text names who the campaign is about. */
 function named(text: string, c: CampaignRules) {
   const m = c?.mention?.trim();
-  return !m || text.toLowerCase().includes(m.toLowerCase()) ? text : `${m}: ${text}`;
+  if (!m || text.toLowerCase().includes(m.toLowerCase())) return text;
+  // "Kai tries to…" becomes "Kai Cenat tries to…" instead of "Kai Cenat: Kai tries to…".
+  const first = m.split(/\s+/)[0];
+  const re = new RegExp(`\\b${first.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+  return re.test(text) ? text.replace(re, m) : `${m}: ${text}`;
 }
 
 export type Platform = "tiktok" | "shorts" | "reels" | "x";

@@ -6,11 +6,11 @@ import { Toast, api, btn, btnCta, btnGhost, btnPrimary, btnSm, field, useToast }
 import type { Campaign } from "@/lib/jobs";
 import { cn } from "@/lib/utils";
 
-type Draft = Omit<Campaign, "id" | "created" | "hashtags" | "extraTags"> & { hashtags: string; extraTags: string };
+type Draft = Omit<Campaign, "id" | "created" | "hashtags" | "extraTags" | "keywords"> & { hashtags: string; extraTags: string; keywords: string };
 
-const EMPTY: Draft = { name: "", streamer: "", mention: "", hashtags: "", extraTags: "", language: "en", lookFor: "", avoid: "", link: "", notes: "" };
+const EMPTY: Draft = { name: "", streamer: "", mention: "", hashtags: "", extraTags: "", keywords: "", language: "en", lookFor: "", avoid: "", link: "", notes: "" };
 
-const toDraft = (c: Campaign): Draft => ({ ...c, hashtags: c.hashtags.join(" "), extraTags: c.extraTags.join(" ") });
+const toDraft = (c: Campaign): Draft => ({ ...c, hashtags: c.hashtags.join(" "), extraTags: c.extraTags.join(" "), keywords: (c.keywords ?? []).join(", ") });
 
 /** Saved clipping campaigns: their rules shape which moments are picked and what every caption says. */
 export function CampaignsView() {
@@ -105,6 +105,11 @@ export function CampaignsView() {
               <input value={editing.draft.extraTags} onChange={(e) => set("extraTags", e.target.value)} placeholder="#gta6 #kaicenatclips" className={field} />
             </label>
             <label className={label}>
+              Search words for titles
+              <input value={editing.draft.keywords} onChange={(e) => set("keywords", e.target.value)} placeholder="GTA 6, GTA VI" className={field} />
+              <span className={hint}>The AI puts one of these in each title, so people searching find it.</span>
+            </label>
+            <label className={label}>
               Stream language
               <select value={editing.draft.language} onChange={(e) => set("language", e.target.value as Draft["language"])} className={field}>
                 <option value="en">English</option>
@@ -182,6 +187,7 @@ export function CampaignsView() {
                   ))}
                 </p>
               )}
+              {(c.keywords ?? []).length > 0 && <p className="mt-2.5 text-[13px] text-muted-foreground"><b className="font-medium text-foreground">Title words:</b> {c.keywords.join(", ")}</p>}
               {c.lookFor && <p className="mt-2.5 text-[13px] text-muted-foreground"><b className="font-medium text-foreground">Look for:</b> {c.lookFor}</p>}
               {c.avoid && <p className="mt-1 text-[13px] text-muted-foreground"><b className="font-medium text-foreground">Avoid:</b> {c.avoid}</p>}
             </article>

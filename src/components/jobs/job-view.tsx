@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import { Toast, api, btn, btnPrimary, useToast } from "@/components/kit";
+import { SetupView } from "@/components/setup/setup-view";
 import { ShortsView } from "@/components/shorts/shorts-view";
 import type { EngineResult, JobMeta, JobStatus, ReviewMap, Timeline } from "@/lib/jobs";
 import { cn } from "@/lib/utils";
@@ -98,6 +99,13 @@ export function JobView({ jobId }: { jobId: string }) {
   const clips = job.result?.clips ?? [];
   const running = isRunning(job.status);
   const progressPage = !showProject && (running || !clips.length || (job.status.state === "done" && sawRunning));
+
+  if (job.status.state === "setup") {
+    return <SetupView jobId={jobId} meta={job.meta} onStarted={() => {
+      setSawRunning(true);
+      reload();
+    }} />;
+  }
 
   return (
     <>

@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { attachCampaign, createLinkJob, getCampaign, getResult, getReview, listJobs, newJobId, parseOptions, partProblem, saveUpload, startEngine, videoExtension, type JobOptions } from "@/lib/jobs";
+import { attachCampaign, createLinkJob, getCampaign, getResult, getReview, listJobs, newJobId, parseOptions, partProblem, saveUpload, startProbe, videoExtension, type JobOptions } from "@/lib/jobs";
 import { parseLink } from "@/lib/links";
 
 const MAX_BYTES = 20 * 1024 ** 3; // 20 GB, as promised on the upload box
@@ -23,10 +23,10 @@ export async function POST(request: NextRequest) {
   if (!request.body) return Response.json({ error: "The upload was empty." }, { status: 400 });
 
   const id = newJobId();
-  const { meta, source } = await saveUpload(id, request.body, name, options, campaign);
+  const { meta } = await saveUpload(id, request.body, name, options, campaign);
   if (meta.bytes === 0) return Response.json({ error: "The upload was empty." }, { status: 400 });
   await attachCampaign(id, campaign);
-  startEngine(id, source, options);
+  await startProbe(id);
   return Response.json({ id }, { status: 201 });
 }
 
@@ -45,7 +45,7 @@ async function startLink(request: NextRequest) {
   if (problem) return Response.json({ error: problem }, { status: 400 });
   await createLinkJob(id, { url: link.url, title, thumbnail: thumb, durationSec }, options, campaign);
   await attachCampaign(id, campaign);
-  startEngine(id, link.url, options);
+  await startProbe(id);
   return Response.json({ id }, { status: 201 });
 }
 

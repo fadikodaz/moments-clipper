@@ -26,6 +26,9 @@ export type JobOptions = {
   campaignId?: string | null;
   from?: number | null;
   to?: number | null;
+  /** Shortest and longest short in seconds, chosen on the set-up screen (overrides length). */
+  minLen?: number | null;
+  maxLen?: number | null;
 };
 export const DEFAULT_OPTIONS: JobOptions = { layout: "auto", length: "auto", count: 0, captions: "bold", language: "hi" };
 export const MAX_PART_SECONDS = 4 * 3600;
@@ -51,7 +54,14 @@ export function parseOptions(raw: Record<string, unknown> | URLSearchParams): Jo
     campaignId: /^[a-z0-9]{6,40}$/.test(campaignId) ? campaignId : null,
     from: sec("from"),
     to: sec("to"),
+    minLen: lengthSec(get("minLen")),
+    maxLen: lengthSec(get("maxLen")),
   };
+}
+
+function lengthSec(v: unknown) {
+  const n = Number(v);
+  return v !== null && v !== undefined && v !== "" && Number.isFinite(n) && n >= 10 && n <= 180 ? Math.round(n) : null;
 }
 
 /** A problem with the chosen part of the video, or null when it is fine (or no part was chosen). */
@@ -81,7 +91,8 @@ export type JobMeta = {
   campaign?: Campaign | null;
 };
 export type JobStatus = {
-  state: "queued" | "running" | "done" | "failed" | "cancelled";
+  /** setup: made, waiting for the user to choose the look on the set-up screen. */
+  state: "setup" | "queued" | "running" | "done" | "failed" | "cancelled";
   step: number;
   steps: number;
   label: string;
@@ -112,6 +123,8 @@ export type EngineClip = {
   captions?: JobOptions["captions"];
   /** How many times the short was made again with edits. */
   edits?: number;
+  /** Its full look (engine/style.py). */
+  style?: Record<string, unknown>;
 };
 export type EngineResult = {
   video: string;
@@ -128,6 +141,7 @@ export type EngineResult = {
 };
 
 const ROOT = path.join(process.cwd(), "data", "jobs");
+const SETUP_STATUS: JobStatus = { state: "setup", step: 0, steps: 5, label: "Choose how your shorts look", detail: "", progress: 0, error: null };
 const ENGINE = path.join(process.cwd(), "engine", "run.py");
 const REMAKE = path.join(process.cwd(), "engine", "remake.py");
 const VIDEO_EXT = new Set([".mp4", ".mov", ".mkv", ".webm"]);
@@ -165,7 +179,7 @@ export async function saveUpload(id: string, body: ReadableStream<Uint8Array>, n
   await pipeline(counted, out);
   const meta: JobMeta = { id, name: name.replace(/\.[^.]+$/, ""), layout: options.layout, options, bytes, created: Date.now(), source: "upload", campaign };
   await writeFile(path.join(jobDir(id), "meta.json"), JSON.stringify(meta));
-  await writeFile(path.join(outDir(id), "status.json"), JSON.stringify({ state: "queued", step: 0, steps: 5, label: "Waiting to start", detail: "", progress: 0, error: null } satisfies JobStatus));
+  await writeFile(path.join(outDir(id), "status.json"), JSON.stringify(SETUP_STATUS));
   return { meta, source: target };
 }
 
@@ -175,7 +189,7 @@ export async function createLinkJob(id: string, link: { url: string; title: stri
   const part = options.from != null || options.to != null ? ` (${clock(options.from ?? 0)} to ${clock(options.to ?? link.durationSec ?? 0)})` : "";
   const meta: JobMeta = { id, name: link.title + part, layout: options.layout, options, bytes: 0, created: Date.now(), source: "youtube", url: link.url, thumbnail: link.thumbnail, durationSec: link.durationSec, campaign };
   await writeFile(path.join(jobDir(id), "meta.json"), JSON.stringify(meta));
-  await writeFile(path.join(outDir(id), "status.json"), JSON.stringify({ state: "queued", step: 0, steps: 5, label: "Waiting to start", detail: "", progress: 0, error: null } satisfies JobStatus));
+  await writeFile(path.join(outDir(id), "status.json"), JSON.stringify(SETUP_STATUS));
   return meta;
 }
 
@@ -185,6 +199,8 @@ export function startEngine(id: string, source: string, o: JobOptions) {
   const args = [ENGINE, source, "--out", outDir(id), "--layout", o.layout, "--length", o.length, "--count", String(o.count), "--captions", o.captions, "--language", o.language ?? "hi"];
   if (o.from != null || o.to != null) args.push("--from", String(o.from ?? 0), "--to", String(o.to ?? o.from! + MAX_PART_SECONDS));
   if (existsSync(path.join(jobDir(id), "campaign.json"))) args.push("--campaign", path.join(jobDir(id), "campaign.json"));
+  if (existsSync(path.join(jobDir(id), "style.json"))) args.push("--style", path.join(jobDir(id), "style.json"));
+  if (o.minLen && o.maxLen) args.push("--min-len", String(o.minLen), "--max-len", String(o.maxLen));
   const child = spawn(/*turbopackIgnore: true*/ process.env.PYTHON ?? "python", args, {
     cwd: path.dirname(ENGINE),
     env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUNBUFFERED: "1" },
@@ -220,11 +236,7 @@ export async function cancelJob(id: string) {
 export async function retryJob(id: string) {
   const meta = await readJson<JobMeta>(path.join(jobDir(id), "meta.json"));
   if (!meta) return false;
-  let source = meta.url ?? null;
-  if (!source) {
-    const file = (await readdir(jobDir(id))).find((f) => /^source\.(mp4|mov|mkv|webm)$/i.test(f));
-    source = file ? path.join(jobDir(id), file) : null;
-  }
+  const source = await jobSource(id, meta);
   if (!source) return false;
   await rm(outDir(id), { recursive: true, force: true });
   await rm(reviewFile(id), { force: true });
@@ -324,8 +336,10 @@ export async function deleteShort(id: string, clipId: string) {
 /** Resolve a file name inside a job's output folder, refusing anything that could escape it. */
 export function outputFile(id: string, file: string) {
   if (!isJobId(id) || !/^[\w.-]+\.(mp4|jpg)$/.test(file)) return null;
-  const full = path.join(outDir(id), file);
-  return full.startsWith(outDir(id) + path.sep) && existsSync(full) ? full : null;
+  // Set-up screen pictures and test renders live in setup/, finished shorts in clips/.
+  const dir = /^(frame\d|test-\d+)\.(jpg|mp4)$/.test(file) ? path.join(jobDir(id), "setup") : outDir(id);
+  const full = path.join(dir, file);
+  return full.startsWith(dir + path.sep) && existsSync(full) ? full : null;
 }
 
 /** Layout of one short: facecam on top, gameplay only, or the whole frame with blurred edges. */
@@ -340,6 +354,8 @@ export type RemakeEdits = {
   layout: ShortLayout;
   captions: JobOptions["captions"];
   lines: { from: number; to: number; text: string }[];
+  /** The full look (engine/style.py); when present it wins over layout/captions. */
+  style?: Record<string, unknown> | null;
 };
 export type RemakeStatus = { state: "running" | "done" | "failed"; error: string | null; started?: number; updated?: number };
 
@@ -349,12 +365,13 @@ export function parseEdits(raw: unknown): RemakeEdits | null {
   const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.max(-30, Math.min(30, v)) : 0);
   const layout = SHORT_LAYOUTS.includes(r.layout as ShortLayout) ? (r.layout as ShortLayout) : null;
   const captions = r.captions === "bold" || r.captions === "simple" || r.captions === "none" ? r.captions : null;
-  if (!layout || !captions) return null;
+  const style = r.style && typeof r.style === "object" && !Array.isArray(r.style) ? (r.style as Record<string, unknown>) : null;
+  if (!style && (!layout || !captions)) return null;
   const lines = (Array.isArray(r.lines) ? r.lines : [])
     .filter((l): l is { from: number; to: number; text: string } => !!l && Number.isInteger(l.from) && Number.isInteger(l.to) && typeof l.text === "string")
     .slice(0, 500)
     .map((l) => ({ from: l.from, to: l.to, text: l.text.slice(0, 300) }));
-  return { startDelta: num(r.startDelta), endDelta: num(r.endDelta), hook: typeof r.hook === "string" ? r.hook.slice(0, 80) : "", layout, captions, lines };
+  return { startDelta: num(r.startDelta), endDelta: num(r.endDelta), hook: typeof r.hook === "string" ? r.hook.slice(0, 80) : "", layout: layout ?? "facecam", captions: captions ?? "bold", lines, style };
 }
 
 const remakeFile = (id: string, clipId: string) => path.join(outDir(id), `remake-${clipId}.json`);
@@ -420,6 +437,8 @@ export type Campaign = {
   hashtags: string[];
   /** Extra hashtags you like to add. */
   extraTags: string[];
+  /** Search words titles should use, e.g. ["GTA 6", "GTA VI"]. */
+  keywords: string[];
   language: "hi" | "en";
   lookFor: string;
   avoid: string;
@@ -460,6 +479,10 @@ export function parseCampaign(raw: unknown, id: string, created: number): Campai
     mention: text("mention", 80),
     hashtags: tags(r.hashtags),
     extraTags: tags(r.extraTags),
+    keywords: (Array.isArray(r.keywords) ? r.keywords.map(String) : typeof r.keywords === "string" ? r.keywords.split(",") : [])
+      .map((k) => k.trim().slice(0, 40))
+      .filter(Boolean)
+      .slice(0, 10),
     language: r.language === "hi" ? "hi" : "en",
     lookFor: text("lookFor", 1000),
     avoid: text("avoid", 1000),
@@ -485,4 +508,149 @@ export async function deleteCampaign(id: string) {
 /** Copy the campaign into the project folder, so later edits to the campaign don't change finished projects. */
 export async function attachCampaign(id: string, campaign: Campaign | null) {
   if (campaign) await writeFile(path.join(jobDir(id), "campaign.json"), JSON.stringify(campaign));
+}
+
+/* ---------------- set-up screen ---------------- */
+
+const PROBE = path.join(process.cwd(), "engine", "setup_probe.py");
+const TEST = path.join(process.cwd(), "engine", "test_short.py");
+
+/** The video a project works on: its link, or the uploaded file. */
+export async function jobSource(id: string, meta?: JobMeta | null) {
+  meta ??= await readJson<JobMeta>(path.join(jobDir(id), "meta.json"));
+  if (meta?.url) return meta.url;
+  const file = (await readdir(jobDir(id)).catch(() => [] as string[])).find((f) => /^source\.(mp4|mov|mkv|webm)$/i.test(f));
+  return file ? path.join(jobDir(id), file) : null;
+}
+
+function runHelper(id: string, script: string, args: string[]) {
+  const log = openSync(path.join(jobDir(id), "engine.log"), "a");
+  const child = spawn(/*turbopackIgnore: true*/ process.env.PYTHON ?? "python", [script, ...args], {
+    cwd: path.dirname(script),
+    env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUNBUFFERED: "1" },
+    detached: true,
+    stdio: ["ignore", log, log],
+    windowsHide: true,
+  });
+  child.on("error", () => {});
+  child.unref();
+}
+
+export type Probe = {
+  state: "running" | "done" | "failed";
+  frames?: { file: string; t: number }[];
+  box?: { x: number; y: number; w: number; h: number; confidence?: number } | null;
+  width?: number;
+  height?: number;
+  error?: string;
+  started?: number;
+  updated?: number;
+};
+export type TestRender = { state: "running" | "done" | "failed"; file?: string; error?: string; started?: number };
+
+const setupDir = (id: string) => path.join(jobDir(id), "setup");
+
+/** Pictures from the video and the facecam box, for the set-up screen (about 10-30 s for a link). */
+export async function startProbe(id: string) {
+  const meta = await readJson<JobMeta>(path.join(jobDir(id), "meta.json"));
+  const source = await jobSource(id, meta);
+  if (!meta || !source) return false;
+  await mkdir(setupDir(id), { recursive: true });
+  await writeFile(path.join(setupDir(id), "probe.json"), JSON.stringify({ state: "running", started: Date.now() / 1000 } satisfies Probe));
+  const o = meta.options;
+  const args = [jobDir(id), source];
+  if (o?.from != null || o?.to != null) args.push("--from", String(o.from ?? 0), "--to", String(o.to ?? (o.from ?? 0) + MAX_PART_SECONDS));
+  if (meta.durationSec) args.push("--duration", String(meta.durationSec));
+  runHelper(id, PROBE, args);
+  return true;
+}
+
+export async function getProbe(id: string) {
+  const p = await readJson<Probe>(path.join(setupDir(id), "probe.json"));
+  if (p?.state === "running" && p.started && Date.now() / 1000 - p.started > 240) return { ...p, state: "failed", error: "Reading the video took too long. Try again." } as Probe;
+  return p;
+}
+
+let testCount = 0;
+
+/** A 5-second sample with the chosen look. */
+export async function startTest(id: string, style: unknown, second: number, hook: string) {
+  const source = await jobSource(id);
+  if (!source) return false;
+  await mkdir(setupDir(id), { recursive: true });
+  const n = ++testCount;
+  const styleFile = path.join(setupDir(id), `style-test-${n}.json`);
+  await writeFile(styleFile, JSON.stringify(style ?? {}));
+  await writeFile(path.join(setupDir(id), "test.json"), JSON.stringify({ state: "running", started: Date.now() / 1000 } satisfies TestRender));
+  const probe = await getProbe(id);
+  const args = [jobDir(id), source, String(Math.max(0, second)), styleFile, "--hook", hook || "This is your opening line", "--n", String(n)];
+  if (probe?.box) args.push("--box", JSON.stringify(probe.box));
+  runHelper(id, TEST, args);
+  return true;
+}
+
+export async function getTest(id: string) {
+  const t = await readJson<TestRender>(path.join(setupDir(id), "test.json"));
+  if (t?.state === "running" && t.started && Date.now() / 1000 - t.started > 180) return { ...t, state: "failed", error: "The test took too long. Try again." } as TestRender;
+  return t;
+}
+
+/** Leave the set-up screen: save the look and the choices, and start making the shorts. */
+export async function startFromSetup(id: string, style: unknown, changes: Partial<JobOptions>) {
+  const file = path.join(jobDir(id), "meta.json");
+  const meta = await readJson<JobMeta>(file);
+  const source = await jobSource(id, meta);
+  if (!meta || !source) return "The original video is no longer here. Start a new project.";
+  const options: JobOptions = { ...(meta.options ?? { ...DEFAULT_OPTIONS, layout: meta.layout }), ...changes };
+  meta.options = options;
+  await writeFile(file, JSON.stringify(meta));
+  await writeFile(path.join(jobDir(id), "style.json"), JSON.stringify(style ?? {}));
+  await writeFile(path.join(outDir(id), "status.json"), JSON.stringify({ state: "queued", step: 0, steps: 5, label: "Waiting to start", detail: "", progress: 0, error: null } satisfies JobStatus));
+  startEngine(id, source, options);
+  return null;
+}
+
+/* ---------------- saved looks (presets) ---------------- */
+
+export type Preset = { id: string; name: string; style: Record<string, unknown>; minLen?: number; maxLen?: number; created: number };
+const PRESETS = path.join(process.cwd(), "data", "presets.json");
+
+export async function listPresets(): Promise<Preset[]> {
+  return (await readJson<Preset[]>(PRESETS)) ?? [];
+}
+
+export async function savePreset(p: Preset) {
+  const list = (await listPresets()).filter((x) => x.id !== p.id && x.name.toLowerCase() !== p.name.toLowerCase());
+  list.unshift(p);
+  await mkdir(path.dirname(PRESETS), { recursive: true });
+  await writeFile(PRESETS, JSON.stringify(list.slice(0, 50), null, 1));
+  return p;
+}
+
+export async function deletePreset(id: string) {
+  await writeFile(PRESETS, JSON.stringify((await listPresets()).filter((x) => x.id !== id), null, 1));
+}
+
+export type RemakeAllStatus = { state: "running" | "done" | "failed"; done: number; total: number; current?: string; failed?: number; error?: string | null; updated?: number };
+
+export async function getRemakeAll(id: string): Promise<RemakeAllStatus | null> {
+  if (!isJobId(id)) return null;
+  const s = await readJson<RemakeAllStatus>(path.join(outDir(id), "remake-all.json"));
+  if (s?.state === "running" && s.updated && Date.now() / 1000 - s.updated > 300) return { ...s, state: "failed", error: "Making the shorts again stopped unexpectedly." };
+  return s;
+}
+
+/** Give every short of a project the same look, one after another (about 40 s each). */
+export async function startRemakeAll(id: string, style: Record<string, unknown>): Promise<string | null> {
+  const job = await getJob(id);
+  if (!job) return "Project not found.";
+  if (job.status.state === "running" || job.status.state === "queued") return "Wait until all shorts are made, then edit.";
+  if ((await getRemakeAll(id))?.state === "running") return "The shorts are already being made again.";
+  const result = await getResult(id);
+  for (const c of result?.clips ?? []) if ((await getRemake(id, c.id))?.state === "running") return "A short is being made again. Wait for it to finish.";
+  const editsFile = path.join(jobDir(id), "edits-all.json");
+  await writeFile(editsFile, JSON.stringify({ style }));
+  await writeFile(path.join(outDir(id), "remake-all.json"), JSON.stringify({ state: "running", done: 0, total: result?.clips.length ?? 0, updated: Date.now() / 1000 } satisfies RemakeAllStatus));
+  runHelper(id, REMAKE, [jobDir(id), "ALL", editsFile]);
+  return null;
 }

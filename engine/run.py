@@ -33,7 +33,8 @@ from make_short import LAYOUTS, render_short, roman_line
 from facecam import find_facecam
 from fetch import FetchError, download_audio, download_video, info, is_url, remote_source
 from pick import pick
-from signals import extract_audio, fmt, loudness_per_second
+from signals import extract_audio, fmt, loudness_per_second, score_seconds
+from style import normalize
 from transcribe import load_key, prompt_for, transcribe
 
 # Share of the progress bar each step takes (roughly its share of the waiting time).
@@ -101,9 +102,11 @@ def trim_audio(src: Path, part: tuple[float, float], out: Path) -> Path:
 
 
 def run(source: str, out_dir: Path, layout: str, top: int, status: Status, length: str = "auto", count: int | None = None, captions: str = "bold",
-        language: str = "hi", campaign: dict | None = None, part: tuple[float, float] | None = None) -> None:
+        language: str = "hi", campaign: dict | None = None, part: tuple[float, float] | None = None,
+        style_raw: dict | None = None, lengths: tuple[float, float] | None = None) -> None:
     """part: (from, to) seconds of a long stream to work on; every time shown to the user stays a time in the full video."""
     key = load_key()
+    style = normalize(style_raw, layout, captions)
     timings = {}
     t_all = time.perf_counter()
     link = is_url(source)
@@ -181,7 +184,8 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
     status.write("running", 4, 0, "Reading what you said")
     t = time.perf_counter()
     picks = pick(video, key, transcript, loud, top=top, length=length, count=count, on_found=found,
-                 on_batch=lambda i, n: status.write("running", 4, i / n, f"Read part {i} of {n}"), language=language, campaign=campaign)["picks"]
+                 on_batch=lambda i, n: status.write("running", 4, i / n, f"Read part {i} of {n}"), language=language, campaign=campaign,
+                 lengths=lengths)["picks"]
     # Campaigns that require the streamer's name on screen: make sure every opening line has it.
     mention = ((campaign or {}).get("mention") or "").strip()
     for p in picks:
@@ -194,8 +198,19 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
     if not picks:
         raise RuntimeError("No moments were good enough to post. Try a longer recording with more action or talking.")
     # From here on, times are seconds in the full video (the part may start hours in).
+    loud_z = score_seconds(loud, [])["loud_z"]
     for p in picks:
+        # Loudest seconds inside the moment (at most 2, apart from each other): the facecam zooms in there.
+        a, b = int(p["start"]), int(p["end"])
+        zooms: list[int] = []
+        for i in sorted(range(a, min(b, len(loud_z))), key=lambda i: -loud_z[i]):
+            if loud_z[i] < 1.8 or len(zooms) == 2:
+                break
+            if all(abs(i - j) >= 6 for j in zooms):
+                zooms.append(i)
+        p["zoomSec"] = [[round(i + offset - 0.3, 2), round(i + offset + 1.2, 2)] for i in sorted(zooms)]
         p["start"], p["end"] = round(p["start"] + offset, 2), round(p["end"] + offset, 2)
+        p["peak"] = round(float(p.get("peak", (p["start"] + p["end"]) / 2 - offset)) + offset, 2)
     if offset:
         transcript = {**transcript, "words": [{**w, "start": w["start"] + offset, "end": w["end"] + offset} for w in transcript["words"]]}
 
@@ -214,13 +229,14 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
             "capWords": r["words"],  # timed caption words, so they can be fixed and the short made again
             "sub": {k: sc.get(k) for k in ("hook", "action", "reaction", "clarity")},
             "layout": "facecam" if box or layout not in ("auto", "none") else "gameplay", "captions": captions,
+            "peakSec": p.get("peak"), "zoomSec": p.get("zoomSec", []), "style": r.get("style"),
         }
 
     def save(final: bool) -> None:
         """Written after every finished short, so the website can show them one by one."""
         clips = sorted(ready, key=lambda c: c["rank"])
         summary = {"video": title, "duration": fmt(len(loud)), "durationSec": len(loud), "layout": layout, "facecam": box,
-                   "offsetSec": offset, "sourceSec": source_sec or offset + len(loud),
+                   "offsetSec": offset, "sourceSec": source_sec or offset + len(loud), "style": style,
                    "settings": {"length": length, "count": count, "captions": captions, "language": language,
                                 "part": list(part) if part else None, "campaign": campaign},
                    "expected": len(picks), "complete": final, "timings_s": {k: round(v, 1) for k, v in timings.items()}, "clips": clips}
@@ -245,8 +261,8 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
             print(f"    direct cutting unavailable: {e}", flush=True)
 
     # Find the facecam once, from frames spread over the whole video.
-    box = None
-    if layout != "none":
+    box = style["cam"]  # drawn by the user on the set-up screen: no need to search
+    if not box and style["layout"] in ("top", "bottom", "pip") and not style["nocam"] and layout != "none":
         status.write("running", 5, 0, "Finding your facecam")
         if mode["remote"]:
             rs = mode["remote"]
@@ -269,7 +285,8 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
         for attempt in (1, 2):  # one retry: a single failed cut should not cost the whole job
             try:
                 res = render_short(mode["video"], p["start"], p["end"] - p["start"], out_dir, name, key, transcript, p.get("hook"), layout, mode["remote"], box, captions,
-                                   language=language)
+                                   language=language, style=style, peak=p["peak"] - p["start"],
+                                   zooms=[(z0 - p["start"], z1 - p["start"]) for z0, z1 in p.get("zoomSec", [])])
                 break
             except RuntimeError as e:
                 print(f"    #{p['rank']} attempt {attempt} failed: {str(e)[:300]}", flush=True)
@@ -323,6 +340,9 @@ def main() -> None:
     ap.add_argument("--campaign", type=Path, help="JSON file with clipping-campaign rules (streamer, mention, lookFor, avoid)")
     ap.add_argument("--from", dest="part_from", type=float, help="only use the video from this second ...")
     ap.add_argument("--to", dest="part_to", type=float, help="... to this second (at most 4 hours per project)")
+    ap.add_argument("--style", type=Path, help="JSON file with the look of the shorts (style.py)")
+    ap.add_argument("--min-len", type=float, help="shortest short in seconds (overrides --length)")
+    ap.add_argument("--max-len", type=float, help="longest short in seconds")
     ap.add_argument("--top", type=int, default=10)
     ap.add_argument("--fresh", action="store_true", help="ignore saved audio/transcript and redo every step")
     a = ap.parse_args()
@@ -346,7 +366,13 @@ def main() -> None:
                 raise ValueError("Choose a part between 1 minute and 4 hours long.")
             part = (lo, hi)
         campaign = json.loads(a.campaign.read_text(encoding="utf-8")) if a.campaign else None
-        run(a.source, out_dir, a.layout, max(a.top, a.count), status, a.length, a.count or None, a.captions, a.language, campaign, part)
+        style_raw = json.loads(a.style.read_text(encoding="utf-8")) if a.style else None
+        lengths = None
+        if a.min_len or a.max_len:
+            lo = max(10.0, a.min_len or 30.0)
+            lengths = (lo, max(lo + 10, min(180.0, a.max_len or lo + 60)))
+        run(a.source, out_dir, a.layout, max(a.top, a.count), status, a.length, a.count or None, a.captions, a.language, campaign, part,
+            style_raw, lengths)
     except BaseException as e:  # includes sys.exit from helpers, so the website always learns the job stopped
         msg = str(e) or e.__class__.__name__
         status.write("failed", 0, 0, "", msg[-600:])

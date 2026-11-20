@@ -22,7 +22,9 @@ import {
   VolumeX,
 } from "lucide-react";
 import { Score, api, btn, btnCta, btnGhost, btnPrimary, btnSm, field, formatTime } from "@/components/kit";
-import type { RemakeEdits, RemakeStatus, ShortLayout } from "@/lib/jobs";
+import type { RemakeAllStatus, RemakeEdits, RemakeStatus, ShortLayout } from "@/lib/jobs";
+import { CaptionControls, ExtraControls, HookControls, LayoutControls } from "@/components/setup/controls";
+import { DEFAULT_STYLE, withDefaults, type Style } from "@/components/setup/style";
 import { cn } from "@/lib/utils";
 import { PLATFORMS, captionLines, postKit, type CampaignRules, type Platform, type Short } from "./model";
 
@@ -377,7 +379,20 @@ function Why({ short }: { short: Short }) {
 
 /* ---------------- edit ---------------- */
 
-const LAYOUT_LABEL: Record<ShortLayout, string> = { facecam: "Facecam on top", gameplay: "Gameplay only", full: "Whole screen, blurred edges" };
+/** This short's look; older shorts only knew a layout and a caption style. */
+function lookOf(short: Short, canFacecam: boolean, defaultCaptions: RemakeEdits["captions"]): Style {
+  if (short.style) return withDefaults(short.style);
+  const layout: ShortLayout = short.layout ?? (canFacecam ? "facecam" : "gameplay");
+  const caps = short.captions ?? defaultCaptions;
+  return withDefaults({
+    layout: layout === "facecam" ? "top" : layout === "gameplay" ? "game" : "full",
+    captions: { ...DEFAULT_STYLE.captions, style: caps === "bold" ? "word" : caps === "simple" ? "box" : "none", font: "Arial Black", size: 25, hl: "#ff7448", y: 68, words: 4, censor: false },
+    hook: { on: true, style: "white", sec: 3.5 },
+    flash: false,
+    zoom: false,
+    progress: false,
+  });
+}
 const SHIFT = 15;
 
 type EditProps = {
@@ -393,14 +408,13 @@ type EditProps = {
 };
 
 function EditPanel({ jobId, short, videoSec, canFacecam, defaultCaptions, locked, updated, onDone, onEditMore }: EditProps) {
-  const origLayout: ShortLayout = short.layout ?? (canFacecam ? "facecam" : "gameplay");
-  const origCaptions = short.captions ?? defaultCaptions;
+  const origLook = lookOf(short, canFacecam, defaultCaptions);
   const lines = captionLines(short);
   const [sd, setSd] = useState(0);
   const [ed, setEd] = useState(0);
   const [hook, setHook] = useState(short.hook ?? "");
-  const [layout, setLayout] = useState<ShortLayout>(origLayout);
-  const [captions, setCaptions] = useState(origCaptions);
+  const [look, setLook] = useState<Style>(origLook);
+  const [all, setAll] = useState<RemakeAllStatus | null>(null);
   const [texts, setTexts] = useState(() => lines.map((l) => l.text));
   const [job, setJob] = useState<RemakeStatus | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -454,7 +468,8 @@ function EditPanel({ jobId, short, videoSec, canFacecam, defaultCaptions, locked
   const maxEd = Math.min(SHIFT, Math.floor(videoSec - short.startSec - short.durSec));
   const newLen = short.durSec - sd + ed;
   const changedLines = lines.flatMap((l, i) => (texts[i].trim().replace(/\s+/g, " ") !== l.text ? [{ from: l.from, to: l.to, text: texts[i].trim() }] : []));
-  const dirty = sd !== 0 || ed !== 0 || hook.trim() !== (short.hook ?? "").trim() || layout !== origLayout || captions !== origCaptions || changedLines.length > 0;
+  const lookChanged = JSON.stringify(look) !== JSON.stringify(origLook);
+  const dirty = sd !== 0 || ed !== 0 || hook.trim() !== (short.hook ?? "").trim() || lookChanged || changedLines.length > 0;
   const tooShort = newLen < 5;
 
   // The lane shows 15 seconds either side of the short; the orange box is what will be kept.
@@ -463,8 +478,33 @@ function EditPanel({ jobId, short, videoSec, canFacecam, defaultCaptions, locked
   const keepW = ((short.durSec - sd + ed) / window_) * 100;
   const signed = (v: number) => `${v > 0 ? "+" : ""}${v} s`;
 
+  // "Apply to all": follow progress until every short is made again.
+  useEffect(() => {
+    if (all?.state !== "running") return;
+    const t = window.setInterval(async () => {
+      try {
+        const s = await api<RemakeAllStatus | null>(`/api/jobs/${jobId}/remake-all`, { cache: "no-store" });
+        if (s) setAll(s);
+        if (s && s.state !== "running") onDone();
+      } catch {
+        // keep polling
+      }
+    }, 2500);
+    return () => window.clearInterval(t);
+  }, [all?.state, jobId, onDone]);
+
+  async function applyAll() {
+    if (!confirm("Make every short of this video again with this look? Each keeps its own start, end and words. It takes about 40 seconds per short.")) return;
+    try {
+      await api(`/api/jobs/${jobId}/remake-all`, { method: "POST", json: { style: look } });
+      setAll({ state: "running", done: 0, total: 0 });
+    } catch (e) {
+      setAll({ state: "failed", done: 0, total: 0, error: (e as Error).message });
+    }
+  }
+
   async function save() {
-    const edits: RemakeEdits = { startDelta: sd, endDelta: ed, hook: hook.trim(), layout, captions, lines: changedLines };
+    const edits: RemakeEdits = { startDelta: sd, endDelta: ed, hook: hook.trim(), layout: "facecam", captions: "bold", lines: changedLines, style: look };
     try {
       await api(url, { method: "POST", json: edits });
       setJob({ state: "running", error: null, started: Date.now() / 1000 });
@@ -514,29 +554,46 @@ function EditPanel({ jobId, short, videoSec, canFacecam, defaultCaptions, locked
           <input value={hook} onChange={(e) => setHook(e.target.value)} maxLength={60} placeholder="No opening line" className={field} />
         </label>
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label>
-            <span className={label}>Layout</span>
-            <select value={layout} onChange={(e) => setLayout(e.target.value as ShortLayout)} className={field}>
-              {(Object.keys(LAYOUT_LABEL) as ShortLayout[]).map((k) => (
-                <option key={k} value={k} disabled={k === "facecam" && !canFacecam}>
-                  {LAYOUT_LABEL[k]}
-                  {k === "facecam" && !canFacecam ? " (no facecam found)" : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span className={label}>Captions</span>
-            <select value={captions} onChange={(e) => setCaptions(e.target.value as RemakeEdits["captions"])} className={field}>
-              <option value="bold">Bold, word by word</option>
-              <option value="simple">Simple</option>
-              <option value="none">No captions</option>
-            </select>
-          </label>
-        </div>
+        <details className="group rounded-xl border bg-panel" open={lookChanged || undefined}>
+          <summary className="flex cursor-pointer list-none items-center justify-between px-3.5 py-3 text-[13px] font-semibold">
+            Layout, captions and extras
+            <span className="text-xs font-normal text-muted-foreground group-open:hidden">Open to change the look</span>
+          </summary>
+          <div className="grid gap-5 border-t px-3.5 pt-3.5 pb-4">
+            <div>
+              <span className={label}>Layout</span>
+              <LayoutControls style={look} set={setLook} hasCam={canFacecam || !!look.cam} />
+            </div>
+            <div>
+              <span className={label}>Captions</span>
+              <CaptionControls style={look} set={setLook} />
+            </div>
+            <div>
+              <span className={label}>Opening line</span>
+              <HookControls style={look} set={setLook} />
+            </div>
+            <div>
+              <span className={label}>Extras</span>
+              <ExtraControls style={look} set={setLook} />
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-raised px-3.5 py-3">
+              <span className="text-[13px] text-muted-foreground">
+                {all?.state === "running"
+                  ? `Giving every short this look: ${all.done} of ${all.total} done…`
+                  : all?.state === "failed"
+                    ? all.error
+                    : all?.state === "done"
+                      ? "Every short now has this look."
+                      : "Like this look? Give it to every short of this video."}
+              </span>
+              <button type="button" onClick={applyAll} disabled={locked || running || all?.state === "running"} className={cn(btn, btnSm)}>
+                {all?.state === "running" ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null} Apply to all shorts
+              </button>
+            </div>
+          </div>
+        </details>
 
-        {lines.length > 0 && captions !== "none" && (
+        {lines.length > 0 && look.captions.style !== "none" && (
           <div>
             <span className={label}>Fix caption words</span>
             <div className="grid max-h-[240px] gap-1.5 overflow-y-auto pr-1">

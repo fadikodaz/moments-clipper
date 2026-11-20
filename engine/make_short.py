@@ -1,11 +1,11 @@
 """
 Step 5 of the clip engine: cut one moment into a vertical short with burned-in captions.
 
-  - Takes the words spoken inside the clip from the transcript.
-  - Converts Hindi script to Roman Hinglish with a Groq chat call (word by word, so timing is kept).
-  - Writes an ASS subtitle file: the opening line in a white box for the first seconds, then
-    3 words on screen with the word being spoken highlighted in orange.
-  - FFmpeg builds the "facecam on top, gameplay below" layout and burns everything in.
+  - Takes the words spoken inside the clip from the transcript (Roman Hinglish for Hindi streams).
+  - Writes an ASS subtitle file: the opening line for the first seconds, then the captions in the
+    chosen look (word by word with the spoken word highlighted, or simple lines).
+  - FFmpeg builds the chosen layout (style.py), optionally starts with 1.5 s of the biggest moment,
+    zooms in on the facecam at loud moments, draws a progress bar and burns everything in.
 
 Usage:  python make_short.py <video> <start_sec> <length_sec> [--name clip] [--hook "text"]
 Needs:  engine/.env with GROQ_API_KEY, and signals/<name>.transcript.json from transcribe.py
@@ -19,15 +19,16 @@ import time
 from pathlib import Path
 
 from llm import chat_json
+from style import FONTS, ass_color, censor, normalize
 from transcribe import load_key
 
-# Facecam box as a share of the source frame (measured on a typical streamer overlay).
-# Finding the facecam automatically comes later; for now the uploader picks the corner.
+# Facecam box used when none was detected or drawn (a typical top-right streamer overlay).
 CAM_W, CAM_H, CAM_MARGIN = 0.197, 0.222, 0.008
 LAYOUTS = ("auto", "top-right", "top-left", "bottom-right", "bottom-left", "none", "full")
-CAPTION_Y = 1300   # pixels from top of the 1080x1920 frame: upper part of the gameplay area
-HOOK_Y = 600       # the opening line sits on the seam between facecam and gameplay
 HOOK_SECONDS = 3.5
+FLASH = 1.5        # seconds of the biggest moment shown first
+FPS = 30
+FONT_DIR = Path(__file__).with_name("fonts")
 
 
 def even(x: float) -> int:
@@ -60,38 +61,85 @@ def encoder_args() -> list[str]:
     return _ENCODER
 
 
-def layout_filter(width: int, height: int, layout: str, box: dict | None = None) -> tuple[str, int]:
-    """FFmpeg filter that turns a wide frame into a vertical frame named [v0], plus the facecam height
-    in the output (0 when there is none), so covers can be cut from the gameplay part only.
-
-    layout: "auto" (use the detected box, gameplay only if none was found), a corner name, "none"
-    (gameplay only, cropped from the middle) or "full" (the whole frame, blurred copy filling the edges).
-    box: detected facecam as fractions of the frame (facecam.py); without it a default corner box is used.
-    """
-    ow, oh = output_size(height)
-    if layout == "full":
-        return (f"[0:v]split=2[a][b];[a]scale={ow}:{oh}:force_original_aspect_ratio=increase,crop={ow}:{oh},"
-                f"scale={ow // 8}:{oh // 8},boxblur=6:2,scale={ow}:{oh},eq=brightness=-0.05[bg];"
-                f"[b]scale={ow}:-2:flags=lanczos[fg];[bg][fg]overlay=0:(H-h)/2[v0]"), 0
-    game_w = min(width, even(height * 9 / 16))
-    if layout == "none" or (layout == "auto" and not box):
-        return f"[0:v]crop={game_w}:{height}:{(width - game_w) // 2}:0,scale={ow}:{oh}:flags=lanczos[v0]", 0
+def cam_pixels(width: int, height: int, box: dict | None, corner: str = "top-right") -> tuple[int, int, int, int]:
+    """Facecam rectangle in source pixels: the given box, or a default box in a corner."""
     if box:
         cw, ch = even(width * box["w"]), even(height * box["h"])
         cx = min(width - cw, max(0, int(width * box["x"])))
         cy = min(height - ch, max(0, int(height * box["y"])))
-    else:
-        cw, ch = even(width * CAM_W), even(height * CAM_H)
-        mx, my = int(width * CAM_MARGIN), int(height * CAM_MARGIN)
-        cx = width - cw - mx if layout.endswith("right") else mx
-        cy = my if layout.startswith("top") else height - ch - my
-    cam_h = even(ow * ch / cw)                   # keep the facecam's shape
-    game_h = oh - cam_h
-    split_w = min(width, even(height * ow / game_h))
-    return (f"[0:v]split=2[a][b];[a]crop={cw}:{ch}:{cx}:{cy},scale={ow}:{cam_h}:flags=lanczos[cam];"
-            f"[b]crop={split_w}:{height}:{(width - split_w) // 2}:0,scale={ow}:{game_h}:flags=lanczos[game];"
-            f"[cam][game]vstack=inputs=2[v0]"), cam_h
-WORDS_PER_SCREEN = 4
+        return cx, cy, cw, ch
+    cw, ch = even(width * CAM_W), even(height * CAM_H)
+    mx, my = int(width * CAM_MARGIN), int(height * CAM_MARGIN)
+    corner = corner if corner in LAYOUTS[1:5] else "top-right"
+    return (width - cw - mx if corner.endswith("right") else mx), (my if corner.startswith("top") else height - ch - my), cw, ch
+
+
+def fit(cx: int, cy: int, cw: int, ch: int, aspect: float) -> tuple[int, int, int, int]:
+    """Largest part of a rectangle with the given width/height ratio, centred."""
+    if cw / ch > aspect:
+        nw = even(ch * aspect)
+        return cx + (cw - nw) // 2, cy, nw, ch
+    nh = even(cw / aspect)
+    return cx, cy + (ch - nh) // 2, cw, nh
+
+
+def game_crop(width: int, height: int, aspect: float, focus: float) -> str:
+    w = min(width, even(height * aspect))
+    h = height if w < width else min(height, even(width / aspect))
+    return f"crop={w}:{h}:{int(focus * (width - w))}:{(height - h) // 2}"
+
+
+def zoom_filter(windows: list[tuple[float, float]], w: int, h: int) -> str:
+    """Quick 15% push-in during each window (seconds in the short), eased over 0.2 s."""
+    if not windows:
+        return ""
+    bumps = [f"clip((in_time-{a:.2f})/0.2,0,1)*clip(({b:.2f}-in_time)/0.2,0,1)" for a, b in windows]
+    z = bumps[0]
+    for b in bumps[1:]:
+        z = f"max({z},{b})"
+    return f",zoompan=z='1+0.15*{z}':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={w}x{h}:fps={FPS}"
+
+
+def layout_filter(width: int, height: int, style: dict, box: dict | None, src: str = "[0:v]", corner: str = "top-right",
+                  zooms: list[tuple[float, float]] | None = None) -> tuple[str, dict]:
+    """FFmpeg filter turning a wide frame ({src}) into the vertical frame [v0], plus where things are:
+    {"cover": (y, h) of the gameplay part for the cover image, "hook_y": opening-line height (1920 units)}."""
+    ow, oh = output_size(height)
+    z = zooms or []
+    k = 1920 / oh
+    lay = style["layout"]
+    if lay in ("top", "bottom", "pip") and style.get("nocam"):
+        lay = "game"
+    cam = cam_pixels(width, height, style.get("cam") or box, corner) if lay in ("top", "bottom", "pip") else None
+    head = f"{src}fps={FPS},setsar=1"
+    if lay in ("top", "bottom"):
+        cam_h = even(oh * style["camPct"] / 100)
+        game_h = oh - cam_h
+        cx, cy, cw, ch = fit(*cam, ow / cam_h)
+        f = (f"{head},split=2[a][b];[a]crop={cw}:{ch}:{cx}:{cy},scale={ow}:{cam_h}:flags=lanczos{zoom_filter(z, ow, cam_h)}[cam];"
+             f"[b]{game_crop(width, height, ow / game_h, style['focus'])},scale={ow}:{game_h}:flags=lanczos[game];")
+        f += "[cam][game]vstack=inputs=2[v0]" if lay == "top" else "[game][cam]vstack=inputs=2[v0]"
+        return f, {"cover": (cam_h, game_h) if lay == "top" else (0, game_h), "hook_y": int(cam_h * k) - 40 if lay == "top" else 220}
+    if lay == "pip":
+        cx, cy, cw, ch = cam
+        pw = even(ow * style["pipSize"] / 100)
+        ph = even(pw * ch / cw)
+        m, top, bottom = even(ow * 0.04), even(oh * 0.09), even(oh * 0.22)
+        x = m if style["pipCorner"][1] == "l" else ow - pw - 12 - m
+        y = top if style["pipCorner"][0] == "t" else oh - ph - 12 - bottom
+        f = (f"{head},split=2[a][b];[b]{game_crop(width, height, ow / oh, style['focus'])},scale={ow}:{oh}:flags=lanczos[g];"
+             f"[a]crop={cw}:{ch}:{cx}:{cy},scale={pw}:{ph}:flags=lanczos{zoom_filter(z, pw, ph)},pad={pw + 12}:{ph + 12}:6:6:white[c];"
+             f"[g][c]overlay={x}:{y}[v0]")
+        return f, {"cover": (0, oh), "hook_y": int((y + ph + 40) * k) if style["pipCorner"][0] == "t" else 260}
+    if lay == "full":
+        f = (f"{head},split=2[a][b];[a]scale={ow}:{oh}:force_original_aspect_ratio=increase,crop={ow}:{oh},"
+             f"scale={ow // 8}:{oh // 8},boxblur=6:2,scale={ow}:{oh},eq=brightness=-0.05[bg];"
+             f"[b]scale={ow}:-2:flags=lanczos[fg];[bg][fg]overlay=0:(H-h)/2[v0]")
+        return f, {"cover": (0, oh), "hook_y": 430}
+    f = f"{head},{game_crop(width, height, ow / oh, style['focus'])},scale={ow}:{oh}:flags=lanczos{zoom_filter(z, ow, oh)}[v0]"
+    return f, {"cover": (0, oh), "hook_y": 260}
+
+
 DEVANAGARI = re.compile(r"[\u0900-\u097F]")
 
 
@@ -172,8 +220,17 @@ def clean(text: str) -> str:
     return text.replace("{", "").replace("}", "").replace("\\", "")
 
 
-def build_ass(words: list[dict], path: Path, hook: str | None = None, captions: str = "bold", hook_y: int = HOOK_Y) -> None:
-    """captions: "bold" (big, word by word, spoken word in orange), "simple" (plain phrase in a box) or "none"."""
+def build_ass(words: list[dict], path: Path, hook: str | None, style: dict, hook_y: int = 600) -> None:
+    """Captions and opening line in the chosen look. Positions are in a 1080x1920 canvas."""
+    c, h = style["captions"], style["hook"]
+    font = FONTS[c["font"]]
+    size = round(c["size"] * 3)
+    cap_y = round(1920 * c["y"] / 100)
+    outline = 7 if c["outline"] else 0
+    white, hl = ass_color(c["color"]), ass_color(c["hl"])
+    hook_back = {"white": "&H00FFFFFF", "yellow": ass_color("#ffd23f"), "plain": "&H00000000"}[h["style"]]
+    hook_text = "&H00FFFFFF" if h["style"] == "plain" else "&H00000000"
+    hook_border = 1 if h["style"] == "plain" else 3
     head = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
@@ -182,33 +239,35 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,Arial Black,76,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,7,3,8,60,60,{CAPTION_Y},1
-Style: Simple,Arial,60,&H00FFFFFF,&H00FFFFFF,&H00000000,&H99000000,-1,0,0,0,100,100,0,0,3,14,0,8,80,80,{CAPTION_Y},1
-Style: Hook,Arial Black,70,&H00000000,&H00000000,&H00FFFFFF,&H00FFFFFF,-1,0,0,0,100,100,0,0,3,18,0,8,90,90,{hook_y},1
+Style: Cap,{font},{size},{white},{white},&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,{outline},{3 if outline else 2},8,60,60,{cap_y},1
+Style: Simple,{font},{round(size * 0.72)},{white},{white},&H00000000,&H99000000,0,0,0,0,100,100,0,0,3,14,0,8,80,80,{cap_y},1
+Style: Hook,Montserrat Black,62,{hook_text},{hook_text},{hook_back},{hook_back},0,0,0,0,100,100,0,0,{hook_border},{18 if hook_border == 3 else 6},0,8,90,90,{hook_y},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
+
+    def say(t: str) -> str:
+        t = clean(t)
+        t = censor(t) if c["censor"] else t
+        return t.upper() if c["upper"] else t
+
+    per = c["words"]
     events = []  # (start, end, text)
-    if captions == "none":
-        words = []
-    if captions == "simple":
-        for g in range(0, len(words), WORDS_PER_SCREEN + 2):
-            group = words[g: g + WORDS_PER_SCREEN + 2]
-            nxt = words[g + WORDS_PER_SCREEN + 2]["start"] if g + WORDS_PER_SCREEN + 2 < len(words) else group[-1]["end"] + 0.4
-            events.append((group[0]["start"], min(nxt, group[-1]["end"] + 0.8), clean(" ".join(x["text"] for x in group))))
-        words = []
-    for g in range(0, len(words), WORDS_PER_SCREEN):
-        group = words[g: g + WORDS_PER_SCREEN]
-        for k, w in enumerate(group):
-            end = group[k + 1]["start"] if k + 1 < len(group) else (words[g + WORDS_PER_SCREEN]["start"] if g + WORDS_PER_SCREEN < len(words) else w["end"] + 0.3)
-            end = min(end, w["end"] + 0.6)  # do not hold a word on screen through long silences
-            parts = []
-            for j, x in enumerate(group):
-                text = clean(x["text"]).upper()
-                # Orange (BGR in ASS) for the word being spoken, white for the others.
-                parts.append(r"{\c&H4874FF&\fscx108\fscy108}" + text + r"{\r}" if j == k else text)
-            events.append((w["start"], end, " ".join(parts)))
+    if c["style"] == "box":
+        per = max(per, 4)
+        for g in range(0, len(words), per):
+            group = words[g: g + per]
+            nxt = words[g + per]["start"] if g + per < len(words) else group[-1]["end"] + 0.4
+            events.append((group[0]["start"], min(nxt, group[-1]["end"] + 0.8), say(" ".join(x["text"] for x in group))))
+    elif c["style"] == "word":
+        for g in range(0, len(words), per):
+            group = words[g: g + per]
+            for k, w in enumerate(group):
+                end = group[k + 1]["start"] if k + 1 < len(group) else (words[g + per]["start"] if g + per < len(words) else w["end"] + 0.3)
+                end = min(end, w["end"] + 0.6)  # do not hold a word on screen through long silences
+                parts = [r"{\c" + hl + r"&\fscx108\fscy108}" + say(x["text"]) + r"{\r}" if j == k else say(x["text"]) for j, x in enumerate(group)]
+                events.append((w["start"], end, " ".join(parts)))
     # Speech-to-text word times can overlap slightly; two captions on screen at once get stacked
     # into two lines. Each caption ends exactly when the next one begins.
     events.sort(key=lambda e: e[0])
@@ -218,23 +277,27 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             e = min(e, events[i + 1][0])
         if e - s < 0.05:
             continue
-        lines.append(f"Dialogue: 0,{ass_time(s)},{ass_time(e)},{'Simple' if captions == 'simple' else 'Cap'},,0,0,0,,{text}")
-    if hook:
-        lines.append(f"Dialogue: 1,{ass_time(0)},{ass_time(HOOK_SECONDS)},Hook,,0,0,0,,{clean(hook)}")
+        lines.append(f"Dialogue: 0,{ass_time(s)},{ass_time(e)},{'Simple' if c['style'] == 'box' else 'Cap'},,0,0,0,,{text}")
+    if hook and h["on"]:
+        lines.append(f"Dialogue: 1,{ass_time(0)},{ass_time(h['sec'])},Hook,,0,0,0,,{clean(hook)}")
     path.write_text(head + "\n".join(lines) + "\n", encoding="utf-8")
 
 
 def render_short(video: Path | None, start: float, length: float, out_dir: Path, name: str, key: str, transcript: dict,
                  hook: str | None = None, layout: str = "top-right", remote: dict | None = None, box: dict | None = None,
-                 captions: str = "bold", words_override: list[dict] | None = None, language: str = "hi") -> dict:
-    """Make one finished short. Returns the caption words and timings.
+                 captions: str = "bold", words_override: list[dict] | None = None, language: str = "hi",
+                 style: dict | None = None, peak: float | None = None, zooms: list[tuple[float, float]] | None = None) -> dict:
+    """Make one finished short. Returns the caption words (times from the moment's start) and timings.
 
     remote: direct stream addresses from fetch.remote_source(); FFmpeg then reads only this
     short's seconds from the server instead of a local file.
-    words_override: caption words already prepared (edited by the user), times relative to start;
-    the hook is then used exactly as given.
+    words_override: caption words already prepared (edited by the user); the hook is then used as given.
+    style: the look (style.py); without it the old layout/captions options are used.
+    peak: second (from start) of the biggest moment, shown first when style["flash"] is on.
+    zooms: loud windows (seconds from start) for the facecam push-in when style["zoom"] is on.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
+    style = normalize(style, layout, captions)
     timings = {}
     t = time.perf_counter()
     if words_override is not None:
@@ -244,32 +307,65 @@ def render_short(video: Path | None, start: float, length: float, out_dir: Path,
         hook = (roman_line(key, hook) if language == "hi" else hook) if hook else None
     timings["hinglish_s"] = round(time.perf_counter() - t, 1)
 
-    ass = out_dir / f"{name}.ass"
-    # With the whole frame shown, the opening line goes above the picture instead of over it.
-    build_ass(clip_words, ass, hook, captions, 430 if layout == "full" else HOOK_Y)
+    # Optional 1.5 s "flash" of the biggest moment before the story starts.
+    flash = style["flash"] and peak is not None and length > FLASH * 3
+    fs = max(0.0, min(length - FLASH, peak - FLASH / 2)) if flash else 0.0
+    lead = FLASH if flash else 0.0
+    shown = []
+    if flash:
+        shown += [{**w, "start": round(w["start"] - fs, 2), "end": round(min(FLASH, w["end"] - fs), 2)}
+                  for w in clip_words if fs <= w["start"] < fs + FLASH - 0.1]
+    shown += [{**w, "start": round(w["start"] + lead, 2), "end": round(w["end"] + lead, 2)} for w in clip_words]
+    total = length + lead
+    zoom_windows = [(a + lead, b + lead) for a, b in (zooms or [])] if style["zoom"] else []
 
-    t = time.perf_counter()
-    # Run from the output folder so the subtitles filter gets a plain file name (Windows drive colons break it).
+    ass = out_dir / f"{name}.ass"
+    # Inputs: (seek, length) segments of the source; with a flash, the peak first, then the story.
+    segments = ([(start + fs, FLASH)] if flash else []) + [(start, length)]
+    inputs: list[str] = []
+    pairs = []  # (video input index, audio input index) per segment
     if remote:
-        net = ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5", "-headers", remote["headers"]]
-        inputs = ["-ss", str(start), *net, "-i", remote["video"]]
-        audio = "0:a"
-        if remote.get("audio"):
-            inputs += ["-ss", str(start), *net, "-i", remote["audio"]]
-            audio = "1:a"
+        net = ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5", "-rw_timeout", "60000000", "-headers", remote["headers"]]
+        for s, d in segments:
+            vi = len(pairs) * (2 if remote.get("audio") else 1)
+            inputs += ["-ss", str(s), "-t", str(d), *net, "-i", remote["video"]]
+            ai = vi
+            if remote.get("audio"):
+                inputs += ["-ss", str(s), "-t", str(d), *net, "-i", remote["audio"]]
+                ai = vi + 1
+            pairs.append((vi, ai))
         size = (remote["width"], remote["height"])
     else:
         assert video is not None
-        inputs, audio, size = ["-ss", str(start), "-i", str(video)], "0:a", video_size(video)
-    lf, cam_h = layout_filter(*size, layout, box)
-    # One pass, two outputs: the short with captions, and a clean cover frame of the gameplay part
-    # (taken after the opening line, before captions are burned in).
-    at = round(min(HOOK_SECONDS + 1.5, length * 0.5), 2)
-    vf = (f"{lf};[v0]setsar=1,split=2[m][p];[m]subtitles={ass.name}[v];"
-          f"[p]select='gte(t\\,{at})',crop=iw:ih-{cam_h}:0:{cam_h},scale=480:-2[pv]")
+        for n, (s, d) in enumerate(segments):
+            inputs += ["-ss", str(s), "-t", str(d), "-i", str(video)]
+            pairs.append((n, n))
+        size = video_size(video)
+    if len(pairs) > 1:
+        joined = "".join(f"[{v}:v][{a}:a]" for v, a in pairs)
+        pre, src, audio = f"{joined}concat=n={len(pairs)}:v=1:a=1[cv][ca];", "[cv]", "[ca]"
+    else:
+        pre, src, audio = "", f"[{pairs[0][0]}:v]", f"{pairs[0][1]}:a"
+    lf, where = layout_filter(*size, style, box, src, layout, zoom_windows)
+    build_ass(shown, ass, hook, style, where["hook_y"])
+
+    t = time.perf_counter()
+    cover_y, cover_h = where["cover"]
+    at = round(min(style["hook"]["sec"] + lead + 1.5, total * 0.5), 2)
+    bar = (f",drawbox=x=0:y=ih-14:w='iw*t/{total:.2f}':h=14:color=0x{style['progressColor'][1:]}@1:t=fill"
+           if style["progress"] else "")
+    fonts = "fontsdir=fonts:" if FONT_DIR.exists() else ""
+    # One pass, two outputs: the short, and a clean cover frame of the gameplay part (before captions).
+    vf = (f"{pre}{lf};[v0]split=2[m][p];[m]subtitles=filename={ass.name}:{fonts}charenc=UTF-8{bar}[v];"
+          f"[p]select='gte(t\\,{at})',crop=iw:{cover_h}:0:{cover_y},scale=480:-2[pv]")
+    # Fonts are found relative to the output folder, so copy them in once.
+    if fonts and not (out_dir / "fonts").exists():
+        (out_dir / "fonts").mkdir(exist_ok=True)
+        for f in FONT_DIR.glob("*.ttf"):
+            (out_dir / "fonts" / f.name).write_bytes(f.read_bytes())
     r = subprocess.run(
         ["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", vf,
-         "-t", str(length), "-map", "[v]", "-map", audio,
+         "-t", f"{total:.2f}", "-map", "[v]", "-map", audio,
          *encoder_args(), "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", f"{name}.mp4",
          "-map", "[pv]", "-frames:v", "1", "-update", "1", "-q:v", "3", f"{name}.jpg"],
         cwd=out_dir, capture_output=True, text=True,
@@ -280,7 +376,7 @@ def render_short(video: Path | None, start: float, length: float, out_dir: Path,
     if not (out_dir / f"{name}.jpg").exists():  # fallback cover from the finished short
         subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", str(at), "-i", f"{name}.mp4", "-frames:v", "1", "-vf", "scale=360:-2", "-q:v", "4", f"{name}.jpg"],
                        cwd=out_dir, capture_output=True)
-    return {"file": f"{name}.mp4", "poster": f"{name}.jpg", "hook": hook, "words": clip_words, "timings": timings}
+    return {"file": f"{name}.mp4", "poster": f"{name}.jpg", "hook": hook, "words": clip_words, "timings": timings, "style": style}
 
 
 def main() -> None:
@@ -290,13 +386,14 @@ def main() -> None:
     ap.add_argument("length", type=float)
     ap.add_argument("--name", default="clip")
     ap.add_argument("--hook")
-    ap.add_argument("--layout", choices=LAYOUTS, default="auto")
+    ap.add_argument("--style", type=Path, help="JSON style file (style.py)")
+    ap.add_argument("--peak", type=float)
     a = ap.parse_args()
     video = a.video.resolve()
     transcript = json.loads((video.parent / "signals" / f"{video.stem}.transcript.json").read_text(encoding="utf-8"))
-    res = render_short(video, a.start, a.length, video.parent / "shorts", a.name, load_key(), transcript, a.hook, a.layout)
+    st = json.loads(a.style.read_text(encoding="utf-8")) if a.style else None
+    res = render_short(video, a.start, a.length, video.parent / "shorts", a.name, load_key(), transcript, a.hook, style=st, peak=a.peak)
     print(f"{len(res['words'])} caption words. Timings: {res['timings']}")
-    print("Hinglish:", " ".join(w["text"] for w in res["words"]))
 
 
 if __name__ == "__main__":

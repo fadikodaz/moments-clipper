@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-from llm import MODEL, chat_json
+from llm import CLAUDE_MODEL, MODEL, smart_json, using_claude
 from signals import SKIP_EDGES, fmt, loudness_per_second, score_seconds
 from transcribe import load_key
 
@@ -46,15 +46,20 @@ return an empty list if nothing is good.
 {brief}
 For each moment:
 - start/end: seconds taken from line timestamps. Length {lo}-{hi} seconds.
-  Start on the line that sets up the moment (the hook), never mid-sentence or mid-joke.
-  End right after the payoff and reaction, not in the middle of a sentence.
-- title: short English title (max 7 words) saying what happens. No clickbait words like "insane".
+  Viewers decide in the first 2 seconds whether to keep watching: start 1-3 seconds before the first
+  thing that grabs attention (a shout, a reveal, a funny line, a crash). Never start on slow setup,
+  greetings, menus or explaining; never mid-sentence. If the moment needs context, keep it short.
+  End right after the payoff and the reaction to it, not in the middle of a sentence.
+- peak: the second (from the line timestamps) of the single biggest moment in it: the loudest
+  reaction or the punchline. It is shown first as a teaser, so it must make people want the rest.
+- title: {title_rule} No clickbait words like "insane" or "you won't believe".
 - reason: one English sentence: why this works as a short, concrete.
-- hook: opening line for the top of the short, max 8 words, {hook_style}.
+- hook: opening line for the top of the short, max 8 words, {hook_style}. Tease the payoff without
+  giving it away ("Wait for the reaction..."), so viewers stay to see it.
 - tags: 1-3 from: Police chase, Shootout, Heist, Crash, Stunt, Race, Funny, Fail, Win, Reaction, Story, Tension.
 - scores 0-100: hook (first 3 s grab), action (what happens on screen), reaction (streamer's energy/humour),
   clarity (understandable alone). overall = your honest judgement, not an average. Be strict: most moments 55-80.
-Return only JSON: {{"moments":[{{"start":..,"end":..,"title":"..","reason":"..","hook":"..","tags":[..],"scores":{{"hook":..,"action":..,"reaction":..,"clarity":..}},"overall":..}}]}}"""
+Return only JSON: {{"moments":[{{"start":..,"end":..,"peak":..,"title":"..","reason":"..","hook":"..","tags":[..],"scores":{{"hook":..,"action":..,"reaction":..,"clarity":..}},"overall":..}}]}}"""
 
 
 def part_text(lo: float, hi: float, segments: list[dict], loud_z: np.ndarray) -> str:
@@ -115,32 +120,43 @@ def campaign_brief(campaign: dict | None) -> str:
 
 
 def pick(video: Path, key: str, transcript: dict, loud: np.ndarray, top: int = 10, n_candidates: int = 0, on_batch=None,
-         length: str = "auto", count: int | None = None, on_found=None, language: str = "hi", campaign: dict | None = None) -> dict:
+         length: str = "auto", count: int | None = None, on_found=None, language: str = "hi", campaign: dict | None = None,
+         lengths: tuple[float, float] | None = None) -> dict:
     """length: auto/short/long (see LENGTHS). count: exact number of shorts, or None for about one per 5 minutes.
     language: "hi" (Hinglish stream, Hinglish hooks) or "en". campaign: rules from a clipping campaign (campaign_brief).
     on_found(moments): called after each part with every moment accepted so far, for the live timeline."""
     sig = video.parent / "signals"
-    lo_len, hi_len = LENGTHS.get(length, LENGTHS["auto"])
-    per_part = PER_PART if not count else max(PER_PART, min(6, -(-count * 2 // max(1, round(len(loud) / (PART - OVERLAP))))))
+    lo_len, hi_len = lengths or LENGTHS.get(length, LENGTHS["auto"])
+    # Claude reads longer parts at once (better sense of what stands out); Groq's free tier needs small ones.
+    part_len = 15 * 60 if using_claude() else PART
+    per_part = (PER_PART + (2 if part_len > PART else 0)) if not count else max(PER_PART, min(8, -(-count * 2 // max(1, round(len(loud) / (part_len - OVERLAP))))))
     speaker = "a Hindi/Hinglish gaming streamer" if language == "hi" else "an English-speaking gaming streamer"
     if campaign and campaign.get("streamer"):
         speaker += f" ({campaign['streamer']})"
     hook_style = "casual Roman Hinglish (English letters only)" if language == "hi" else "casual English, the way viewers talk in comments"
-    system = SYSTEM_TEMPLATE.format(lo=lo_len, hi=hi_len, per_part=per_part, speaker=speaker, brief=campaign_brief(campaign), hook_style=hook_style)
+    mention = ((campaign or {}).get("mention") or "").strip()
+    keywords = ", ".join((campaign or {}).get("keywords") or [])
+    title_rule = "short English title (max 7 words) saying what happens."
+    if mention:
+        title_rule = (f"English title for YouTube, max 10 words, saying what happens. Write the full name \"{mention}\" exactly once "
+                      f"(never repeat it or add a shortened name next to it)"
+                      + (f", and include one of these search words when it fits naturally: {keywords}." if keywords else "."))
+    system = SYSTEM_TEMPLATE.format(lo=int(lo_len), hi=int(hi_len), per_part=per_part, speaker=speaker, brief=campaign_brief(campaign),
+                                    hook_style=hook_style, title_rule=title_rule)
     loud_z = score_seconds(loud, [])["loud_z"]
     total = float(len(loud))
     t0 = time.perf_counter()
 
     lo_edge, hi_edge = (SKIP_EDGES, total - SKIP_EDGES) if total > SKIP_EDGES * 4 else (0.0, total)
-    starts = list(np.arange(lo_edge, max(lo_edge + 1, hi_edge - OVERLAP), PART - OVERLAP))
-    print(f"  reading {len(starts)} parts of about {PART // 60} min")
+    starts = list(np.arange(lo_edge, max(lo_edge + 1, hi_edge - OVERLAP), part_len - OVERLAP))
+    print(f"  reading {len(starts)} parts of about {part_len // 60} min with {CLAUDE_MODEL if using_claude() else MODEL}")
 
     proposals = []
     for n, lo in enumerate(starts, 1):
-        hi = min(hi_edge, lo + PART)
+        hi = min(hi_edge, lo + part_len)
         text = part_text(lo, hi, transcript["segments"], loud_z)
         if len(text) > 80:
-            res = chat_json(key, [{"role": "system", "content": system},
+            res = smart_json(key, [{"role": "system", "content": system},
                                   {"role": "user", "content": f"Part {n} of {len(starts)}: {fmt(lo)} to {fmt(hi)} of a {fmt(total)} video.\n\n{text}"}])
             got = res.get("moments", []) if isinstance(res, dict) else []
             print(f"  part {n}: {len(got)} moments proposed")
@@ -158,7 +174,12 @@ def pick(video: Path, key: str, transcript: dict, loud: np.ndarray, top: int = 1
             s, e = fit(float(x["start"]), float(x["end"]), transcript["segments"], total, lo_len, hi_len)
             if s < lo_edge - 5 or e > hi_edge + 5 or e - s < lo_len - 1:
                 continue
-            picks.append({**x, "start": s, "end": e})
+            # The teaser second must lie inside the final clip; otherwise use the middle.
+            try:
+                pk = float(x.get("peak"))
+            except (TypeError, ValueError):
+                pk = (s + e) / 2
+            picks.append({**x, "start": s, "end": e, "peak": pk if s + 1 <= pk <= e - 1 else (s + e) / 2})
         except (KeyError, TypeError, ValueError):
             continue
 
@@ -173,7 +194,7 @@ def pick(video: Path, key: str, transcript: dict, loud: np.ndarray, top: int = 1
     for i, p in enumerate(final, 1):
         p.update(rank=i, start_text=fmt(p["start"]), end_text=fmt(p["end"]), length=round(p["end"] - p["start"]))
 
-    out = {"video": str(video), "model": MODEL, "parts": len(starts), "proposed": len(proposals), "kept_by_ai": len(picks),
+    out = {"video": str(video), "model": CLAUDE_MODEL if using_claude() else MODEL, "parts": len(starts), "proposed": len(proposals), "kept_by_ai": len(picks),
            "seconds_taken": round(time.perf_counter() - t0, 1), "picks": final}
     (sig / f"{video.stem}.picks.json").write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"  {len(proposals)} proposed, {len(picks)} good enough, returning top {len(final)}")

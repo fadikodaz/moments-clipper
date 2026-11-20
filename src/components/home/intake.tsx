@@ -28,7 +28,7 @@ function size(bytes: number) {
   return bytes > 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(2)} GB` : `${Math.round(bytes / 1024 ** 2)} MB`;
 }
 
-/** One bar for a link or a file. After that: what we found, four simple choices, and Get clips. */
+/** One bar for a link or a file. After that: campaign, language and which part; the look is chosen on the next screen. */
 export function Intake() {
   const router = useRouter();
   const urlId = useId();
@@ -154,19 +154,6 @@ export function Intake() {
     req.send(file);
   }
 
-  const select = (key: keyof Options, label: string, choices: [string, string][]) => (
-    <label className="grid gap-1.5">
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      <select value={opts[key]} disabled={starting} onChange={(e) => setOpts((o) => ({ ...o, [key]: e.target.value }))} className={field}>
-        {choices.map(([v, l]) => (
-          <option key={v} value={v}>
-            {l}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-
   return (
     <form
       noValidate
@@ -262,26 +249,6 @@ export function Intake() {
                 <option value="hi">Hindi / Hinglish</option>
               </select>
             </label>
-            {select("length", "Clip length", [
-              ["auto", "Auto (60 s to 2 min)"],
-              ["short", "Short (30 to 60 s)"],
-              ["long", "Long (1 to 3 min)"],
-            ])}
-            {select("count", "How many clips", [
-              ["0", "Auto (about 1 per 5 min)"],
-              ["5", "5"],
-              ["10", "10"],
-              ["20", "20"],
-            ])}
-            {select("captions", "Captions", [
-              ["bold", "Bold, word by word"],
-              ["simple", "Simple"],
-              ["none", "No captions"],
-            ])}
-            {select("layout", "Facecam", [
-              ["auto", "Find it for me"],
-              ["none", "No facecam"],
-            ])}
             <label className="grid gap-1.5">
               <span className="text-xs font-medium text-muted-foreground">From (optional)</span>
               <input value={opts.from} disabled={starting} onChange={(e) => setOpts((o) => ({ ...o, from: e.target.value }))} placeholder="0:00:00" inputMode="numeric" className={field} />
@@ -323,7 +290,7 @@ export function Intake() {
                 </button>
                 <button type="button" onClick={start} disabled={starting} className={cn(btn, btnCta, btnLg, "max-sm:flex-1")}>
                   {starting ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : <Sparkles aria-hidden="true" />}
-                  {starting ? "Starting" : "Get clips"}
+                  {starting ? (upload !== null ? "Uploading" : "Opening") : "Next: set up"}
                 </button>
               </span>
             </div>
