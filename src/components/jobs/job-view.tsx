@@ -56,6 +56,8 @@ export function JobView({ jobId }: { jobId: string }) {
     window.scrollTo({ top: 0 });
   }, []);
 
+  const reload = useCallback(() => setRound((n) => n + 1), []);
+
   async function act(action: "cancel" | "retry") {
     if (action === "cancel" && !confirm("Stop making shorts for this video? Shorts that are already finished are kept.")) return;
     setBusy(true);
@@ -107,6 +109,8 @@ export function JobView({ jobId }: { jobId: string }) {
           meta={job.meta}
           result={job.result!}
           initialReview={job.review}
+          locked={running}
+          onReload={reload}
           notice={
             running
               ? `${clips.length} of ${job.result?.expected ?? "?"} shorts ready. The rest appear here as they finish.`

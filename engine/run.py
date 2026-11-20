@@ -166,7 +166,9 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
             "startSec": p["start"], "durSec": round(p["end"] - p["start"], 2),
             "tags": p.get("tags", []), "reason": p.get("reason"), "hook": r["hook"] or roman_line(key, p.get("hook", "")),
             "words": " ".join(w["text"] for w in r["words"]),
+            "capWords": r["words"],  # timed caption words, so they can be fixed and the short made again
             "sub": {k: sc.get(k) for k in ("hook", "action", "reaction", "clarity")},
+            "layout": "facecam" if box or layout not in ("auto", "none") else "gameplay", "captions": captions,
         }
 
     def save(final: bool) -> None:

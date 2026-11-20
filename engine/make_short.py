@@ -24,7 +24,7 @@ from transcribe import load_key
 # Facecam box as a share of the source frame (measured on a typical streamer overlay).
 # Finding the facecam automatically comes later; for now the uploader picks the corner.
 CAM_W, CAM_H, CAM_MARGIN = 0.197, 0.222, 0.008
-LAYOUTS = ("auto", "top-right", "top-left", "bottom-right", "bottom-left", "none")
+LAYOUTS = ("auto", "top-right", "top-left", "bottom-right", "bottom-left", "none", "full")
 CAPTION_Y = 1300   # pixels from top of the 1080x1920 frame: upper part of the gameplay area
 HOOK_Y = 600       # the opening line sits on the seam between facecam and gameplay
 HOOK_SECONDS = 3.5
@@ -64,10 +64,15 @@ def layout_filter(width: int, height: int, layout: str, box: dict | None = None)
     """FFmpeg filter that turns a wide frame into a vertical frame named [v0], plus the facecam height
     in the output (0 when there is none), so covers can be cut from the gameplay part only.
 
-    layout: "auto" (use the detected box, gameplay only if none was found), a corner name, or "none".
+    layout: "auto" (use the detected box, gameplay only if none was found), a corner name, "none"
+    (gameplay only, cropped from the middle) or "full" (the whole frame, blurred copy filling the edges).
     box: detected facecam as fractions of the frame (facecam.py); without it a default corner box is used.
     """
     ow, oh = output_size(height)
+    if layout == "full":
+        return (f"[0:v]split=2[a][b];[a]scale={ow}:{oh}:force_original_aspect_ratio=increase,crop={ow}:{oh},"
+                f"scale={ow // 8}:{oh // 8},boxblur=6:2,scale={ow}:{oh},eq=brightness=-0.05[bg];"
+                f"[b]scale={ow}:-2:flags=lanczos[fg];[bg][fg]overlay=0:(H-h)/2[v0]"), 0
     game_w = min(width, even(height * 9 / 16))
     if layout == "none" or (layout == "auto" and not box):
         return f"[0:v]crop={game_w}:{height}:{(width - game_w) // 2}:0,scale={ow}:{oh}:flags=lanczos[v0]", 0
@@ -135,6 +140,27 @@ def roman_line(key: str, text: str) -> str:
     return " ".join(to_roman(key, text.split())) if DEVANAGARI.search(text) else text
 
 
+def split_tokens(words: list[dict]) -> list[dict]:
+    """One entry per space-separated word, so the website can line up edits word by word.
+    A converted word that became two ("all right") shares its time span evenly."""
+    out = []
+    for w in words:
+        parts = w["text"].split()
+        if len(parts) <= 1:
+            out.append({**w, "text": w["text"].strip()} if parts else None)
+            continue
+        step = (w["end"] - w["start"]) / len(parts)
+        out += [{"text": p, "start": round(w["start"] + i * step, 2), "end": round(w["start"] + (i + 1) * step, 2)} for i, p in enumerate(parts)]
+    return [w for w in out if w]
+
+
+def clip_caption_words(key: str, transcript: dict, start: float, length: float) -> list[dict]:
+    """Words spoken between start and start+length, in Roman Hinglish, times relative to start."""
+    words = [w for w in transcript["words"] if start <= w["start"] < start + length]
+    roman = to_roman(key, [w["word"] for w in words]) if words else []
+    return split_tokens([{"text": r, "start": round(w["start"] - start, 2), "end": round(w["end"] - start, 2)} for w, r in zip(words, roman)])
+
+
 def ass_time(t: float) -> str:
     t = max(0.0, t)
     h, m = int(t // 3600), int(t % 3600 // 60)
@@ -145,7 +171,7 @@ def clean(text: str) -> str:
     return text.replace("{", "").replace("}", "").replace("\\", "")
 
 
-def build_ass(words: list[dict], path: Path, hook: str | None = None, captions: str = "bold") -> None:
+def build_ass(words: list[dict], path: Path, hook: str | None = None, captions: str = "bold", hook_y: int = HOOK_Y) -> None:
     """captions: "bold" (big, word by word, spoken word in orange), "simple" (plain phrase in a box) or "none"."""
     head = f"""[Script Info]
 ScriptType: v4.00+
@@ -157,7 +183,7 @@ WrapStyle: 0
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Cap,Arial Black,76,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,7,3,8,60,60,{CAPTION_Y},1
 Style: Simple,Arial,60,&H00FFFFFF,&H00FFFFFF,&H00000000,&H99000000,-1,0,0,0,100,100,0,0,3,14,0,8,80,80,{CAPTION_Y},1
-Style: Hook,Arial Black,70,&H00000000,&H00000000,&H00FFFFFF,&H00FFFFFF,-1,0,0,0,100,100,0,0,3,18,0,8,90,90,{HOOK_Y},1
+Style: Hook,Arial Black,70,&H00000000,&H00000000,&H00FFFFFF,&H00FFFFFF,-1,0,0,0,100,100,0,0,3,18,0,8,90,90,{hook_y},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -199,24 +225,27 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 def render_short(video: Path | None, start: float, length: float, out_dir: Path, name: str, key: str, transcript: dict,
                  hook: str | None = None, layout: str = "top-right", remote: dict | None = None, box: dict | None = None,
-                 captions: str = "bold") -> dict:
+                 captions: str = "bold", words_override: list[dict] | None = None) -> dict:
     """Make one finished short. Returns the caption words and timings.
 
     remote: direct stream addresses from fetch.remote_source(); FFmpeg then reads only this
     short's seconds from the server instead of a local file.
+    words_override: caption words already prepared (edited by the user), times relative to start;
+    the hook is then used exactly as given.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     timings = {}
-    words = [w for w in transcript["words"] if start <= w["start"] < start + length]
-
     t = time.perf_counter()
-    roman = to_roman(key, [w["word"] for w in words]) if words else []
-    hook = roman_line(key, hook) if hook else None
+    if words_override is not None:
+        clip_words = words_override
+    else:
+        clip_words = clip_caption_words(key, transcript, start, length)
+        hook = roman_line(key, hook) if hook else None
     timings["hinglish_s"] = round(time.perf_counter() - t, 1)
-    clip_words = [{"text": r, "start": round(w["start"] - start, 2), "end": round(w["end"] - start, 2)} for w, r in zip(words, roman)]
 
     ass = out_dir / f"{name}.ass"
-    build_ass(clip_words, ass, hook, captions)
+    # With the whole frame shown, the opening line goes above the picture instead of over it.
+    build_ass(clip_words, ass, hook, captions, 430 if layout == "full" else HOOK_Y)
 
     t = time.perf_counter()
     # Run from the output folder so the subtitles filter gets a plain file name (Windows drive colons break it).

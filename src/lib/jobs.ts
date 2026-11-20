@@ -73,12 +73,20 @@ export type EngineClip = {
   hook: string;
   words: string;
   sub: { hook: number; action: number; reaction: number; clarity: number };
+  /** Timed caption words (seconds from the short's start); older projects don't have them. */
+  capWords?: { text: string; start: number; end: number }[];
+  layout?: ShortLayout;
+  captions?: JobOptions["captions"];
+  /** How many times the short was made again with edits. */
+  edits?: number;
 };
 export type EngineResult = {
   video: string;
   duration: string;
   durationSec: number;
   layout: string;
+  /** Facecam box found in the video (fractions of the frame), or null when there is none. */
+  facecam?: { x: number; y: number; w: number; h: number } | null;
   /** How many shorts the AI picked; clips fills up to this while the job runs. */
   expected?: number;
   complete?: boolean;
@@ -88,6 +96,7 @@ export type EngineResult = {
 
 const ROOT = path.join(process.cwd(), "data", "jobs");
 const ENGINE = path.join(process.cwd(), "engine", "run.py");
+const REMAKE = path.join(process.cwd(), "engine", "remake.py");
 const VIDEO_EXT = new Set([".mp4", ".mov", ".mkv", ".webm"]);
 
 export const isJobId = (id: string) => /^[a-z0-9]{6,40}$/.test(id);
@@ -281,4 +290,75 @@ export function outputFile(id: string, file: string) {
   if (!isJobId(id) || !/^[\w.-]+\.(mp4|jpg)$/.test(file)) return null;
   const full = path.join(outDir(id), file);
   return full.startsWith(outDir(id) + path.sep) && existsSync(full) ? full : null;
+}
+
+/** Layout of one short: facecam on top, gameplay only, or the whole frame with blurred edges. */
+export const SHORT_LAYOUTS = ["facecam", "gameplay", "full"] as const;
+export type ShortLayout = (typeof SHORT_LAYOUTS)[number];
+
+/** Changes from the Edit tab. Lines replace caption words by index into the short's current words. */
+export type RemakeEdits = {
+  startDelta: number;
+  endDelta: number;
+  hook: string;
+  layout: ShortLayout;
+  captions: JobOptions["captions"];
+  lines: { from: number; to: number; text: string }[];
+};
+export type RemakeStatus = { state: "running" | "done" | "failed"; error: string | null; started?: number; updated?: number };
+
+export function parseEdits(raw: unknown): RemakeEdits | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.max(-30, Math.min(30, v)) : 0);
+  const layout = SHORT_LAYOUTS.includes(r.layout as ShortLayout) ? (r.layout as ShortLayout) : null;
+  const captions = r.captions === "bold" || r.captions === "simple" || r.captions === "none" ? r.captions : null;
+  if (!layout || !captions) return null;
+  const lines = (Array.isArray(r.lines) ? r.lines : [])
+    .filter((l): l is { from: number; to: number; text: string } => !!l && Number.isInteger(l.from) && Number.isInteger(l.to) && typeof l.text === "string")
+    .slice(0, 500)
+    .map((l) => ({ from: l.from, to: l.to, text: l.text.slice(0, 300) }));
+  return { startDelta: num(r.startDelta), endDelta: num(r.endDelta), hook: typeof r.hook === "string" ? r.hook.slice(0, 80) : "", layout, captions, lines };
+}
+
+const remakeFile = (id: string, clipId: string) => path.join(outDir(id), `remake-${clipId}.json`);
+const isClipId = (c: string) => /^c\d{2,3}$/.test(c);
+
+/** A remake that has not reported back for 5 minutes has most likely crashed. */
+export async function getRemake(id: string, clipId: string): Promise<RemakeStatus | null> {
+  if (!isJobId(id) || !isClipId(clipId)) return null;
+  const s = await readJson<RemakeStatus>(remakeFile(id, clipId));
+  if (s?.state === "running" && s.updated && Date.now() / 1000 - s.updated > 300) {
+    return { ...s, state: "failed", error: "Making the short again stopped unexpectedly. Try once more." };
+  }
+  return s;
+}
+
+/** Make one short again with edits, in the background (about 30-60 seconds). One at a time per project. */
+export async function startRemake(id: string, clipId: string, edits: RemakeEdits): Promise<string | null> {
+  const job = await getJob(id);
+  if (!job) return "Project not found.";
+  if (job.status.state === "running" || job.status.state === "queued") return "Wait until all shorts are made, then edit.";
+  const result = await getResult(id);
+  if (!result?.clips.some((c) => c.id === clipId)) return "This short no longer exists.";
+  for (const c of result.clips) {
+    if ((await getRemake(id, c.id))?.state === "running") return c.id === clipId ? "This short is already being made again." : "Another short is being made again. Wait for it to finish.";
+  }
+  const editsFile = path.join(jobDir(id), `edits-${clipId}.json`);
+  await writeFile(editsFile, JSON.stringify(edits));
+  const now = Date.now() / 1000;
+  await writeFile(remakeFile(id, clipId), JSON.stringify({ state: "running", error: null, started: now, updated: now } satisfies RemakeStatus));
+  const log = openSync(path.join(jobDir(id), "engine.log"), "a");
+  const child = spawn(/*turbopackIgnore: true*/ process.env.PYTHON ?? "python", [REMAKE, jobDir(id), clipId, editsFile], {
+    cwd: path.dirname(REMAKE),
+    env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUNBUFFERED: "1" },
+    detached: true,
+    stdio: ["ignore", log, log],
+    windowsHide: true,
+  });
+  child.on("error", async (e) => {
+    await writeFile(remakeFile(id, clipId), JSON.stringify({ state: "failed", error: `Could not start the engine: ${e.message}` } satisfies RemakeStatus)).catch(() => {});
+  });
+  child.unref();
+  return null;
 }
