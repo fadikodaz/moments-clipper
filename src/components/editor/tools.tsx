@@ -6,6 +6,7 @@ import { field } from "@/components/kit";
 import { Range, Switch } from "@/components/setup/controls";
 import { CAPTION_PRESETS, FONTS, HOOK_PRESETS, captionPreset, cssFont, type Layout, type Style } from "@/components/setup/style";
 import { cn } from "@/lib/utils";
+import { DEFAULT_BOX } from "@/components/setup/frame-editor";
 
 export type ToolKey = "hook" | "cap" | "layout" | "time" | "fx";
 type SetStyle = (fn: (s: Style) => Style) => void;
@@ -288,9 +289,8 @@ export function LayoutPanel({ style: s, set, hasCam, who, camEditor }: { style: 
               key={k}
               type="button"
               aria-pressed={s.layout === k}
-              disabled={needsCam && !hasCam}
-              title={needsCam && !hasCam ? "Place the facecam box first" : undefined}
-              onClick={() => set((x) => ({ ...x, layout: k, nocam: needsCam ? false : x.nocam }))}
+              title={needsCam && !hasCam ? "No facecam found yet: we'll place a box for you to drag onto the face" : undefined}
+              onClick={() => set((x) => ({ ...x, layout: k, nocam: needsCam ? false : x.nocam, cam: needsCam && !hasCam ? (x.cam ?? DEFAULT_BOX) : x.cam }))}
               className={cn("grid justify-items-center gap-1.5 rounded-xl border bg-raised px-1 py-2.5 text-[11px] leading-tight font-medium text-muted-foreground disabled:opacity-35", s.layout === k && "border-moment bg-moment-soft text-foreground")}
             >
               <LayoutIcon k={k} />

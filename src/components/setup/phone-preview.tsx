@@ -172,9 +172,17 @@ export function PhonePreview({ style: s, frame, cam, hook, width = BASE_W, selec
           style={{ top: camArea.top, height: camArea.height }}
         />
       )}
-      {!frame && <p className="absolute inset-0 grid place-items-center text-[13px] text-muted-foreground">Reading the video…</p>}
+      {!frame && (
+        <div className="absolute inset-0 grid place-items-center bg-[radial-gradient(circle_at_50%_40%,rgb(255_255_255/0.06),transparent_60%)]">
+          <div className="grid justify-items-center gap-3 px-6 text-center">
+            <span className="size-7 animate-spin rounded-full border-2 border-white/15 border-t-moment" aria-hidden="true" />
+            <p className="text-[13px] font-medium text-white/85">Getting pictures from the video</p>
+            <p className="text-xs leading-snug text-white/45">Looking for the facecam. Your look appears here in a few seconds.</p>
+          </div>
+        </div>
+      )}
 
-      {h.on && hook.trim() && (
+      {frame && h.on && hook.trim() && (
         <div
           {...handlers("hook")}
           role={onSelect ? "button" : undefined}
@@ -197,7 +205,7 @@ export function PhonePreview({ style: s, frame, cam, hook, width = BASE_W, selec
         </div>
       )}
 
-      {c.style !== "none" && (
+      {frame && c.style !== "none" && (
         <div
           {...handlers("cap")}
           role={onSelect || onCaptionY ? "button" : undefined}
@@ -232,8 +240,8 @@ export function PhonePreview({ style: s, frame, cam, hook, width = BASE_W, selec
           )}
         </div>
       )}
-      {s.progress && <div className="pointer-events-none absolute bottom-0 left-0 h-[5px] animate-[prog_8s_linear_infinite]" style={{ background: s.progressColor }} />}
-      {s.flash && <div className="pointer-events-none absolute top-2.5 left-2.5 rounded-md bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">▶ Starts with the best 1.5 s</div>}
+      {frame && s.progress && <div className="pointer-events-none absolute bottom-0 left-0 h-[5px] animate-[prog_8s_linear_infinite]" style={{ background: s.progressColor }} />}
+      {frame && s.flash && <div className="pointer-events-none absolute top-2.5 left-2.5 rounded-md bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">▶ Starts with the best 1.5 s</div>}
     </div>
   );
 }

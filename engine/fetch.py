@@ -20,7 +20,7 @@ from pathlib import Path
 # 720p H.264 + AAC: plays everywhere, decodes fast, and keeps transfers small.
 VIDEO_FORMAT = "bv*[height<=720][vcodec^=avc1]+ba[ext=m4a]/b[height<=720][vcodec^=avc1]/bv*[height<=720]+ba/b[height<=720]"
 # Smallest AAC first (about 20 MB per hour): speech-to-text only needs 16 kHz anyway.
-AUDIO_FORMAT = "139/ba[ext=m4a]/ba"
+AUDIO_FORMAT = "ba[ext=m4a][format_note*=original]/ba[format_note*=original]/139/ba[ext=m4a]/ba"
 BASE = [sys.executable, "-m", "yt_dlp", "--no-warnings", "--no-playlist", "--js-runtimes", "node", "--retries", "5", "--fragment-retries", "5"]
 ATTEMPTS = 3  # YouTube randomly refuses a download address (HTTP 403); a fresh request usually works
 
@@ -139,6 +139,18 @@ _hls_info: dict[str, tuple[float, dict]] = {}
 WORKERS = 8
 
 
+def _original(f: dict) -> int:
+    """Rank an audio track: the video's original language first, dubbed tracks last."""
+    note = str(f.get("format_note") or "").lower()
+    return (2 if "original" in note or "default" in note else 0) + (1 if (f.get("language_preference") or 0) > 0 else 0) - (3 if "dubbed" in note else 0)
+
+
+def _pick_audio(auds: list[dict], itag: str) -> dict:
+    """The original-language track of the wanted quality (videos with AI dubs carry one track per language)."""
+    same = [f for f in auds if str(f["format_id"]).split("-")[0] == itag] or auds
+    return max(same, key=_original)
+
+
 def _formats(url: str) -> dict | None:
     """HLS video (720p H.264 or the best below) and audio formats, cached for 2 hours (addresses expire later)."""
     with _hls_lock:
@@ -152,11 +164,11 @@ def _formats(url: str) -> dict | None:
     hls = [f for f in data.get("formats", []) if str(f.get("protocol", "")).startswith("m3u8")]
     vids = sorted((f for f in hls if str(f.get("vcodec", "")).startswith("avc1") and (f.get("height") or 0) <= 720),
                   key=lambda f: (f.get("height") or 0, -(f.get("fps") or 0)), reverse=True)
-    auds = {f["format_id"]: f for f in hls if f.get("vcodec") in (None, "none")}
+    auds = [f for f in hls if f.get("vcodec") in (None, "none")]
     out = None
     if vids and auds:
         low = [f for f in vids if (f.get("height") or 0) <= 360]
-        out = {"video": vids[0], "video_lo": min(low, key=lambda f: abs((f.get("height") or 0) - 240)) if low else vids[-1], "audio_hi": auds.get("234") or next(iter(auds.values())), "audio_lo": auds.get("233") or next(iter(auds.values())),
+        out = {"video": vids[0], "video_lo": min(low, key=lambda f: abs((f.get("height") or 0) - 240)) if low else vids[-1], "audio_hi": _pick_audio(auds, "234"), "audio_lo": _pick_audio(auds, "233"),
                "duration": float(data.get("duration") or 0)}
     with _hls_lock:
         _hls_info[url] = (time.time(), out)

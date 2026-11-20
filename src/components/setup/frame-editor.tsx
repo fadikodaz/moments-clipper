@@ -16,7 +16,7 @@ type Props = {
   set: (fn: (s: Style) => Style) => void;
 };
 
-const DEFAULT_BOX: Box = { x: 0.78, y: 0.02, w: 0.2, h: 0.22 };
+export const DEFAULT_BOX: Box = { x: 0.02, y: 0.58, w: 0.32, h: 0.4 };
 
 /** One real frame of the video with the facecam box: drag it to move, drag a corner to resize. */
 export function FrameEditor({ frames, index, onIndex, detected, style: s, set }: Props) {
