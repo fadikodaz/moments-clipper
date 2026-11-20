@@ -24,7 +24,7 @@ import {
 import { Score, api, btn, btnCta, btnGhost, btnPrimary, btnSm, field, formatTime } from "@/components/kit";
 import type { RemakeEdits, RemakeStatus, ShortLayout } from "@/lib/jobs";
 import { cn } from "@/lib/utils";
-import { PLATFORMS, captionLines, postKit, type Platform, type Short } from "./model";
+import { PLATFORMS, captionLines, postKit, type CampaignRules, type Platform, type Short } from "./model";
 
 export type Tab = "post" | "edit" | "why";
 const TABS: [Tab, string, typeof Copy][] = [
@@ -54,6 +54,7 @@ type Props = {
   onDelete: (s: Short) => void;
   onChanged: () => void;
   toast: (msg: string) => void;
+  campaign?: CampaignRules;
 };
 
 export function WatchView(props: Props) {
@@ -159,7 +160,7 @@ export function WatchView(props: Props) {
           </div>
 
           <div id="tab-panel" role="tabpanel" aria-labelledby={`tab-${tab}`}>
-            {tab === "post" && <PostKit short={short} toast={props.toast} />}
+            {tab === "post" && <PostKit short={short} campaign={props.campaign} toast={props.toast} />}
             {tab === "why" && <Why short={short} />}
             {tab === "edit" && (
               <EditPanel
@@ -290,10 +291,10 @@ function Player({ short, ref }: { short: Short; ref: React.Ref<PlayerHandle> }) 
 
 /* ---------------- post kit ---------------- */
 
-function PostKit({ short, toast }: { short: Short; toast: (m: string) => void }) {
+function PostKit({ short, campaign, toast }: { short: Short; campaign?: CampaignRules; toast: (m: string) => void }) {
   const [platform, setPlatform] = useState<Platform>("tiktok");
   const [copied, setCopied] = useState<number | null>(null);
-  const kit = postKit(short)[platform];
+  const kit = postKit(short, campaign)[platform];
 
   async function copy(i: number) {
     try {

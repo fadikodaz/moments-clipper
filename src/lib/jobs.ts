@@ -16,9 +16,19 @@ import type { ReadableStream as WebReadableStream } from "node:stream/web";
 export const LAYOUTS = ["auto", "top-right", "top-left", "bottom-right", "bottom-left", "none"] as const;
 export type FacecamLayout = (typeof LAYOUTS)[number];
 
-/** What the user chose before starting. */
-export type JobOptions = { layout: FacecamLayout; length: "auto" | "short" | "long"; count: number; captions: "bold" | "simple" | "none" };
-export const DEFAULT_OPTIONS: JobOptions = { layout: "auto", length: "auto", count: 0, captions: "bold" };
+/** What the user chose before starting. from/to: only this part of a long video (seconds), at most 4 hours. */
+export type JobOptions = {
+  layout: FacecamLayout;
+  length: "auto" | "short" | "long";
+  count: number;
+  captions: "bold" | "simple" | "none";
+  language: "hi" | "en";
+  campaignId?: string | null;
+  from?: number | null;
+  to?: number | null;
+};
+export const DEFAULT_OPTIONS: JobOptions = { layout: "auto", length: "auto", count: 0, captions: "bold", language: "hi" };
+export const MAX_PART_SECONDS = 4 * 3600;
 
 export function parseOptions(raw: Record<string, unknown> | URLSearchParams): JobOptions {
   const get = (k: string) => (raw instanceof URLSearchParams ? raw.get(k) : raw[k]);
@@ -26,12 +36,33 @@ export function parseOptions(raw: Record<string, unknown> | URLSearchParams): Jo
   const length = String(get("length") ?? "auto");
   const captions = String(get("captions") ?? "bold");
   const count = Number(get("count") ?? 0);
+  const sec = (k: string) => {
+    const v = get(k);
+    const n = v === null || v === undefined || v === "" ? NaN : Number(v);
+    return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+  };
+  const campaignId = String(get("campaignId") ?? "");
   return {
     layout: LAYOUTS.includes(layout) ? layout : "auto",
     length: length === "short" || length === "long" ? length : "auto",
     count: Number.isInteger(count) && count >= 0 && count <= 30 ? count : 0,
     captions: captions === "simple" || captions === "none" ? captions : "bold",
+    language: get("language") === "en" ? "en" : "hi",
+    campaignId: /^[a-z0-9]{6,40}$/.test(campaignId) ? campaignId : null,
+    from: sec("from"),
+    to: sec("to"),
   };
+}
+
+/** A problem with the chosen part of the video, or null when it is fine (or no part was chosen). */
+export function partProblem(o: JobOptions, durationSec?: number) {
+  const whole = o.from == null && o.to == null;
+  if (whole) return durationSec && durationSec > MAX_PART_SECONDS ? "This video is longer than 4 hours. Choose a part of up to 4 hours (From and To)." : null;
+  const from = o.from ?? 0, to = o.to ?? durationSec ?? 0;
+  if (to - from < 60) return "The chosen part must be at least 1 minute long.";
+  if (to - from > MAX_PART_SECONDS) return "The chosen part can be at most 4 hours long. Make the rest in another project.";
+  if (durationSec && from >= durationSec) return "The chosen part starts after the end of the video.";
+  return null;
 }
 
 export type JobMeta = {
@@ -46,6 +77,8 @@ export type JobMeta = {
   source?: "upload" | "youtube";
   url?: string;
   thumbnail?: string | null;
+  /** Rules of the clipping campaign this project is for, copied when it started. */
+  campaign?: Campaign | null;
 };
 export type JobStatus = {
   state: "queued" | "running" | "done" | "failed" | "cancelled";
@@ -121,7 +154,7 @@ async function readJson<T>(file: string): Promise<T | null> {
 }
 
 /** Stream the request body straight to disk, so multi-GB uploads never sit in memory. */
-export async function saveUpload(id: string, body: ReadableStream<Uint8Array>, name: string, options: JobOptions) {
+export async function saveUpload(id: string, body: ReadableStream<Uint8Array>, name: string, options: JobOptions, campaign: Campaign | null = null) {
   const ext = videoExtension(name)!;
   await mkdir(outDir(id), { recursive: true });
   const target = path.join(jobDir(id), `source${ext}`);
@@ -130,16 +163,17 @@ export async function saveUpload(id: string, body: ReadableStream<Uint8Array>, n
   const counted = Readable.fromWeb(body as unknown as WebReadableStream<Uint8Array>);
   counted.on("data", (chunk: Buffer) => (bytes += chunk.length));
   await pipeline(counted, out);
-  const meta: JobMeta = { id, name: name.replace(/\.[^.]+$/, ""), layout: options.layout, options, bytes, created: Date.now(), source: "upload" };
+  const meta: JobMeta = { id, name: name.replace(/\.[^.]+$/, ""), layout: options.layout, options, bytes, created: Date.now(), source: "upload", campaign };
   await writeFile(path.join(jobDir(id), "meta.json"), JSON.stringify(meta));
   await writeFile(path.join(outDir(id), "status.json"), JSON.stringify({ state: "queued", step: 0, steps: 5, label: "Waiting to start", detail: "", progress: 0, error: null } satisfies JobStatus));
   return { meta, source: target };
 }
 
 /** A job for a pasted link: nothing to upload, the engine fetches what it needs. */
-export async function createLinkJob(id: string, link: { url: string; title: string; thumbnail: string | null; durationSec?: number }, options: JobOptions) {
+export async function createLinkJob(id: string, link: { url: string; title: string; thumbnail: string | null; durationSec?: number }, options: JobOptions, campaign: Campaign | null = null) {
   await mkdir(outDir(id), { recursive: true });
-  const meta: JobMeta = { id, name: link.title, layout: options.layout, options, bytes: 0, created: Date.now(), source: "youtube", url: link.url, thumbnail: link.thumbnail, durationSec: link.durationSec };
+  const part = options.from != null || options.to != null ? ` (${clock(options.from ?? 0)} to ${clock(options.to ?? link.durationSec ?? 0)})` : "";
+  const meta: JobMeta = { id, name: link.title + part, layout: options.layout, options, bytes: 0, created: Date.now(), source: "youtube", url: link.url, thumbnail: link.thumbnail, durationSec: link.durationSec, campaign };
   await writeFile(path.join(jobDir(id), "meta.json"), JSON.stringify(meta));
   await writeFile(path.join(outDir(id), "status.json"), JSON.stringify({ state: "queued", step: 0, steps: 5, label: "Waiting to start", detail: "", progress: 0, error: null } satisfies JobStatus));
   return meta;
@@ -148,7 +182,9 @@ export async function createLinkJob(id: string, link: { url: string; title: stri
 /** Start the Python engine in the background; it keeps running if the page is closed. Source is a file path or a link. */
 export function startEngine(id: string, source: string, o: JobOptions) {
   const log = openSync(path.join(jobDir(id), "engine.log"), "a");
-  const args = [ENGINE, source, "--out", outDir(id), "--layout", o.layout, "--length", o.length, "--count", String(o.count), "--captions", o.captions];
+  const args = [ENGINE, source, "--out", outDir(id), "--layout", o.layout, "--length", o.length, "--count", String(o.count), "--captions", o.captions, "--language", o.language ?? "hi"];
+  if (o.from != null || o.to != null) args.push("--from", String(o.from ?? 0), "--to", String(o.to ?? o.from! + MAX_PART_SECONDS));
+  if (existsSync(path.join(jobDir(id), "campaign.json"))) args.push("--campaign", path.join(jobDir(id), "campaign.json"));
   const child = spawn(/*turbopackIgnore: true*/ process.env.PYTHON ?? "python", args, {
     cwd: path.dirname(ENGINE),
     env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUNBUFFERED: "1" },
@@ -361,4 +397,92 @@ export async function startRemake(id: string, clipId: string, edits: RemakeEdits
   });
   child.unref();
   return null;
+}
+
+function clock(sec: number) {
+  const s = Math.max(0, Math.round(sec));
+  return `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/* ---------------- clipping campaigns ---------------- */
+
+/**
+ * Rules of a paid clipping campaign (e.g. from Content Rewards). The engine uses streamer, mention,
+ * lookFor and avoid when picking moments; the Post kit adds mention and hashtags to every caption.
+ */
+export type Campaign = {
+  id: string;
+  name: string;
+  streamer: string;
+  /** Name every caption and opening line must contain. */
+  mention: string;
+  /** Hashtags the campaign requires, e.g. ["#KAICENAT"]. */
+  hashtags: string[];
+  /** Extra hashtags you like to add. */
+  extraTags: string[];
+  language: "hi" | "en";
+  lookFor: string;
+  avoid: string;
+  link: string;
+  notes: string;
+  created: number;
+};
+
+const CAMPAIGNS = path.join(process.cwd(), "data", "campaigns.json");
+
+export async function listCampaigns(): Promise<Campaign[]> {
+  return (await readJson<Campaign[]>(CAMPAIGNS)) ?? [];
+}
+
+export async function getCampaign(id: string | null | undefined) {
+  if (!id) return null;
+  return (await listCampaigns()).find((c) => c.id === id) ?? null;
+}
+
+const tags = (v: unknown) =>
+  (Array.isArray(v) ? v : typeof v === "string" ? v.split(/[\s,]+/) : [])
+    .map((t) => String(t).trim().replace(/^#*/, ""))
+    .filter((t) => /^[\p{L}\p{N}_]{1,40}$/u.test(t))
+    .slice(0, 15)
+    .map((t) => `#${t}`);
+
+export function parseCampaign(raw: unknown, id: string, created: number): Campaign | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const text = (k: string, max: number) => (typeof r[k] === "string" ? (r[k] as string).trim().slice(0, max) : "");
+  const name = text("name", 120);
+  if (!name) return null;
+  const link = text("link", 500);
+  return {
+    id,
+    name,
+    streamer: text("streamer", 80),
+    mention: text("mention", 80),
+    hashtags: tags(r.hashtags),
+    extraTags: tags(r.extraTags),
+    language: r.language === "hi" ? "hi" : "en",
+    lookFor: text("lookFor", 1000),
+    avoid: text("avoid", 1000),
+    link: /^https?:\/\//i.test(link) ? link : "",
+    notes: text("notes", 4000),
+    created,
+  };
+}
+
+export async function saveCampaign(c: Campaign) {
+  const list = (await listCampaigns()).filter((x) => x.id !== c.id);
+  list.unshift(c);
+  await mkdir(path.dirname(CAMPAIGNS), { recursive: true });
+  await writeFile(CAMPAIGNS, JSON.stringify(list, null, 1));
+  return c;
+}
+
+export async function deleteCampaign(id: string) {
+  const list = await listCampaigns();
+  await writeFile(CAMPAIGNS, JSON.stringify(list.filter((x) => x.id !== id), null, 1));
+}
+
+/** Copy the campaign into the project folder, so later edits to the campaign don't change finished projects. */
+export async function attachCampaign(id: string, campaign: Campaign | null) {
+  if (campaign) await writeFile(path.join(jobDir(id), "campaign.json"), JSON.stringify(campaign));
 }

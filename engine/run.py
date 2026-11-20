@@ -23,6 +23,8 @@ import threading
 import time
 import traceback
 
+import subprocess
+
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -32,12 +34,13 @@ from facecam import find_facecam
 from fetch import FetchError, download_audio, download_video, info, is_url, remote_source
 from pick import pick
 from signals import extract_audio, fmt, loudness_per_second
-from transcribe import load_key, transcribe
+from transcribe import load_key, prompt_for, transcribe
 
 # Share of the progress bar each step takes (roughly its share of the waiting time).
 WEIGHTS = {1: 0.03, 2: 0.22, 3: 0.01, 4: 0.19, 5: 0.55}
 LINK_WEIGHTS = {1: 0.15, 2: 0.18, 3: 0.01, 4: 0.16, 5: 0.50}  # links spend time downloading the audio first
-MAX_LINK_SECONDS = 4 * 3600
+MAX_LINK_SECONDS = 24 * 3600
+MAX_PART_SECONDS = 4 * 3600  # one project reads at most 4 hours; longer streams are made in parts (--from/--to)
 LABELS = {1: "Reading the audio", 2: "Listening to what you said", 3: "Measuring the action", 4: "Picking the best moments", 5: "Making your shorts"}
 
 
@@ -87,11 +90,24 @@ def write_timeline(out_dir: Path, data: dict) -> None:
             time.sleep(0.05)
 
 
-def run(source: str, out_dir: Path, layout: str, top: int, status: Status, length: str = "auto", count: int | None = None, captions: str = "bold") -> None:
+def trim_audio(src: Path, part: tuple[float, float], out: Path) -> Path:
+    """Just the chosen part of a long recording's sound, so only that part is listened to and read."""
+    if not out.exists():
+        r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", str(part[0]), "-to", str(part[1]), "-i", str(src), "-vn", "-ac", "1", "-c:a", "aac", "-b:a", "64k", str(out)],
+                           capture_output=True, text=True)
+        if r.returncode:
+            raise RuntimeError(f"Could not cut the chosen part out of the video:\n{r.stderr[-500:]}")
+    return out
+
+
+def run(source: str, out_dir: Path, layout: str, top: int, status: Status, length: str = "auto", count: int | None = None, captions: str = "bold",
+        language: str = "hi", campaign: dict | None = None, part: tuple[float, float] | None = None) -> None:
+    """part: (from, to) seconds of a long stream to work on; every time shown to the user stays a time in the full video."""
     key = load_key()
     timings = {}
     t_all = time.perf_counter()
     link = is_url(source)
+    upload: Path | None = None
     t = time.perf_counter()
     status.write("running", 1, 0, "Checking the link" if link else "")
 
@@ -101,15 +117,32 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
         meta = info(source)
         if meta.get("live_status") in ("is_live", "is_upcoming"):
             raise FetchError("This stream is still live. Paste the link again once it has ended.")
-        if (meta.get("duration") or 0) > MAX_LINK_SECONDS:
-            raise FetchError("Videos up to 4 hours are supported for now.")
+        source_sec = float(meta.get("duration") or 0)
+        if source_sec > MAX_LINK_SECONDS:
+            raise FetchError("Videos up to 24 hours are supported.")
+        if not part and source_sec > MAX_PART_SECONDS:
+            raise FetchError(f"This video is {source_sec / 3600:.1f} hours long. Choose a part of up to 4 hours (From and To) and make the rest in another project.")
         title = meta.get("title") or "YouTube video"
-        video = download_audio(source, job_dir / "source_audio",
-                               lambda f: status.write("running", 1, f * 0.95, f"Downloading the audio from YouTube, {round(f * 100)}%"),
-                               lambda n, m: status.write("running", 1, 0, f"YouTube refused, trying again ({n} of {m})"))
+        progress = lambda f: status.write("running", 1, f * 0.9, f"Downloading the audio from YouTube, {round(f * 100)}%")
+        retry = lambda n, m: status.write("running", 1, 0, f"YouTube refused, trying again ({n} of {m})")
+        if part:
+            # The whole stream's sound is kept once in a shared folder, so other parts of it start at once.
+            cache = job_dir.parent / "_cache"
+            have = [f for f in cache.glob(f"{meta['id']}.*") if f.suffix not in (".part", ".ytdl")]
+            full = have[0] if have else download_audio(source, cache / meta["id"], progress, retry)
+            status.write("running", 1, 0.95, "Cutting out your chosen part")
+            video = trim_audio(full, part, job_dir / "source_audio.m4a")
+        else:
+            video = download_audio(source, job_dir / "source_audio", progress, retry)
     else:
-        video = Path(source).resolve()
-        title = video.name
+        upload = Path(source).resolve()
+        title = upload.name
+        r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(upload)], capture_output=True, text=True)
+        source_sec = float(r.stdout.strip() or 0)
+        if part:
+            status.write("running", 1, 0.2, "Cutting out your chosen part")
+        video = trim_audio(upload, part, upload.parent / "source_part.m4a") if part else upload
+    offset = float(part[0]) if part else 0.0
     sig = video.parent / "signals"
     sig.mkdir(exist_ok=True)
 
@@ -120,8 +153,10 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
     status.write("running", 2, 0, "Starting")
     t = time.perf_counter()
     tfile = sig / f"{video.stem}.transcript.json"
+    names = ", ".join(dict.fromkeys(x for x in ((campaign or {}).get("streamer"), (campaign or {}).get("mention")) if x))
     transcript = (json.loads(tfile.read_text(encoding="utf-8")) if tfile.exists()
-                  else transcribe(video, key, on_piece=lambda i, n: status.write("running", 2, i / n, f"Part {i} of {n}")))
+                  else transcribe(video, key, on_piece=lambda i, n: status.write("running", 2, i / n, f"Part {i} of {n}"),
+                                  language=language, prompt=prompt_for(language, names)))
     timings["2_listen"] = time.perf_counter() - t
 
     status.write("running", 3)
@@ -132,7 +167,7 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
     bins = np.array_split(loud, min(160, max(1, len(loud))))
     lv = np.array([b.mean() for b in bins])
     lv = (lv - np.percentile(lv, 5)) / max(1e-6, np.percentile(lv, 99) - np.percentile(lv, 5))
-    timeline = {"durationSec": len(loud), "bars": [round(float(min(1, max(0.06, v))), 3) for v in lv], "moments": []}
+    timeline = {"offsetSec": offset, "durationSec": len(loud), "bars": [round(float(min(1, max(0.06, v))), 3) for v in lv], "moments": []}
     write_timeline(out_dir, timeline)
 
     def found(new: list[dict]) -> None:
@@ -146,13 +181,23 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
     status.write("running", 4, 0, "Reading what you said")
     t = time.perf_counter()
     picks = pick(video, key, transcript, loud, top=top, length=length, count=count, on_found=found,
-                 on_batch=lambda i, n: status.write("running", 4, i / n, f"Read part {i} of {n}"))["picks"]
+                 on_batch=lambda i, n: status.write("running", 4, i / n, f"Read part {i} of {n}"), language=language, campaign=campaign)["picks"]
+    # Campaigns that require the streamer's name on screen: make sure every opening line has it.
+    mention = ((campaign or {}).get("mention") or "").strip()
+    for p in picks:
+        if mention and mention.lower() not in (p.get("hook") or "").lower():
+            p["hook"] = f"{mention}: {p.get('hook') or p.get('title') or ''}".strip(": ")
     # The timeline now shows only the moments that became shorts.
     timeline["moments"] = [{"id": f"c{p['rank']:02d}", "start": p["start"], "end": p["end"], "score": p.get("overall"), "title": p.get("title")} for p in picks]
     write_timeline(out_dir, timeline)
     timings["4_pick"] = time.perf_counter() - t
     if not picks:
         raise RuntimeError("No moments were good enough to post. Try a longer recording with more action or talking.")
+    # From here on, times are seconds in the full video (the part may start hours in).
+    for p in picks:
+        p["start"], p["end"] = round(p["start"] + offset, 2), round(p["end"] + offset, 2)
+    if offset:
+        transcript = {**transcript, "words": [{**w, "start": w["start"] + offset, "end": w["end"] + offset} for w in transcript["words"]]}
 
     lock = threading.Lock()
     ready: list[dict] = []
@@ -164,7 +209,7 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
         return {
             "id": f"c{p['rank']:02d}", "rank": p["rank"], "file": r["file"], "poster": r["poster"], "title": p.get("title"), "score": p.get("overall"),
             "startSec": p["start"], "durSec": round(p["end"] - p["start"], 2),
-            "tags": p.get("tags", []), "reason": p.get("reason"), "hook": r["hook"] or roman_line(key, p.get("hook", "")),
+            "tags": p.get("tags", []), "reason": p.get("reason"), "hook": r["hook"] or (roman_line(key, p.get("hook", "")) if language == "hi" else p.get("hook", "")),
             "words": " ".join(w["text"] for w in r["words"]),
             "capWords": r["words"],  # timed caption words, so they can be fixed and the short made again
             "sub": {k: sc.get(k) for k in ("hook", "action", "reaction", "clarity")},
@@ -175,7 +220,9 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
         """Written after every finished short, so the website can show them one by one."""
         clips = sorted(ready, key=lambda c: c["rank"])
         summary = {"video": title, "duration": fmt(len(loud)), "durationSec": len(loud), "layout": layout, "facecam": box,
-                   "settings": {"length": length, "count": count, "captions": captions},
+                   "offsetSec": offset, "sourceSec": source_sec or offset + len(loud),
+                   "settings": {"length": length, "count": count, "captions": captions, "language": language,
+                                "part": list(part) if part else None, "campaign": campaign},
                    "expected": len(picks), "complete": final, "timings_s": {k: round(v, 1) for k, v in timings.items()}, "clips": clips}
         tmp = out_dir / "clips.tmp"
         tmp.write_text(json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -189,7 +236,7 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
     status.write("running", 5, 0, f"0 of {len(picks)} ready")
     t = time.perf_counter()
     # Where the shorts are cut from: the uploaded file, or (for links) YouTube's servers directly.
-    mode: dict = {"video": None if link else video, "remote": None}
+    mode: dict = {"video": upload, "remote": None}
     if link:
         status.write("running", 5, 0, "Connecting to YouTube")
         try:
@@ -203,10 +250,10 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
         status.write("running", 5, 0, "Finding your facecam")
         if mode["remote"]:
             rs = mode["remote"]
-            input_for = lambda t: ["-ss", str(t), "-headers", rs["headers"], "-i", rs["video"]]
+            input_for = lambda t: ["-ss", str(t + offset), "-headers", rs["headers"], "-i", rs["video"]]
         else:
             src = mode["video"] if mode["video"] else video
-            input_for = lambda t: ["-ss", str(t), "-i", str(src)]
+            input_for = lambda t: ["-ss", str(t + offset), "-i", str(src)]
         try:
             box = find_facecam(len(loud), input_for, layout)
             if layout == "auto" and not box:
@@ -221,7 +268,8 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
         res = None
         for attempt in (1, 2):  # one retry: a single failed cut should not cost the whole job
             try:
-                res = render_short(mode["video"], p["start"], p["end"] - p["start"], out_dir, name, key, transcript, p.get("hook"), layout, mode["remote"], box, captions)
+                res = render_short(mode["video"], p["start"], p["end"] - p["start"], out_dir, name, key, transcript, p.get("hook"), layout, mode["remote"], box, captions,
+                                   language=language)
                 break
             except RuntimeError as e:
                 print(f"    #{p['rank']} attempt {attempt} failed: {str(e)[:300]}", flush=True)
@@ -271,6 +319,10 @@ def main() -> None:
     ap.add_argument("--length", choices=("auto", "short", "long"), default="auto", help="auto 60-150 s, short 30-60 s, long 60-180 s")
     ap.add_argument("--count", type=int, default=0, help="exact number of shorts (0 = about one per 5 minutes)")
     ap.add_argument("--captions", choices=("bold", "simple", "none"), default="bold")
+    ap.add_argument("--language", choices=("hi", "en"), default="hi", help="hi: Hindi/Hinglish stream, en: English stream")
+    ap.add_argument("--campaign", type=Path, help="JSON file with clipping-campaign rules (streamer, mention, lookFor, avoid)")
+    ap.add_argument("--from", dest="part_from", type=float, help="only use the video from this second ...")
+    ap.add_argument("--to", dest="part_to", type=float, help="... to this second (at most 4 hours per project)")
     ap.add_argument("--top", type=int, default=10)
     ap.add_argument("--fresh", action="store_true", help="ignore saved audio/transcript and redo every step")
     a = ap.parse_args()
@@ -287,7 +339,14 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     status = Status(out_dir / "status.json", LINK_WEIGHTS if link else WEIGHTS)
     try:
-        run(a.source, out_dir, a.layout, max(a.top, a.count), status, a.length, a.count or None, a.captions)
+        part = None
+        if a.part_from is not None or a.part_to is not None:
+            lo, hi = a.part_from or 0.0, a.part_to
+            if hi is None or hi - lo < 60 or hi - lo > MAX_PART_SECONDS:
+                raise ValueError("Choose a part between 1 minute and 4 hours long.")
+            part = (lo, hi)
+        campaign = json.loads(a.campaign.read_text(encoding="utf-8")) if a.campaign else None
+        run(a.source, out_dir, a.layout, max(a.top, a.count), status, a.length, a.count or None, a.captions, a.language, campaign, part)
     except BaseException as e:  # includes sys.exit from helpers, so the website always learns the job stopped
         msg = str(e) or e.__class__.__name__
         status.write("failed", 0, 0, "", msg[-600:])

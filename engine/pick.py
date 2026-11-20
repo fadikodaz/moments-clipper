@@ -35,7 +35,7 @@ LENGTHS = {"auto": (60, 150), "short": (30, 60), "long": (60, 180)}
 
 SYSTEM_TEMPLATE = """You are the clip editor for a gaming-stream clipping tool. Viewers scroll Shorts/TikTok/Reels;
 a clip must grab attention in the first 2 seconds, hold it, and make sense without the rest of the stream.
-You read a part of a transcript from a Hindi/Hinglish gaming streamer. Lines look like "[612-615] text"
+You read a part of a transcript from {speaker}. Lines look like "[612-615] text"
 (seconds into the video). LOUD marks a big volume spike (action, explosion, shouting, laughter).
 
 Propose up to {per_part} moments from this part that would each make a great standalone short.
@@ -43,14 +43,14 @@ Good moments: a fail or win with a strong reaction, a funny exchange, a chase or
 a surprising twist, a story with a punchline. Skip greetings, intros/outros, sponsor or subscribe talk,
 menu/loading talk, and slow explaining with no payoff. Fewer strong moments beat more weak ones;
 return an empty list if nothing is good.
-
+{brief}
 For each moment:
 - start/end: seconds taken from line timestamps. Length {lo}-{hi} seconds.
   Start on the line that sets up the moment (the hook), never mid-sentence or mid-joke.
   End right after the payoff and reaction, not in the middle of a sentence.
 - title: short English title (max 7 words) saying what happens. No clickbait words like "insane".
 - reason: one English sentence: why this works as a short, concrete.
-- hook: opening line for the top of the short, max 8 words, casual Roman Hinglish (English letters only).
+- hook: opening line for the top of the short, max 8 words, {hook_style}.
 - tags: 1-3 from: Police chase, Shootout, Heist, Crash, Stunt, Race, Funny, Fail, Win, Reaction, Story, Tension.
 - scores 0-100: hook (first 3 s grab), action (what happens on screen), reaction (streamer's energy/humour),
   clarity (understandable alone). overall = your honest judgement, not an average. Be strict: most moments 55-80.
@@ -97,14 +97,36 @@ def fit(start: float, end: float, segments: list[dict], total: float, CLIP_MIN: 
     return max(0.0, round(start - 0.3, 2)), round(min(total, end + 0.6), 2)
 
 
+def campaign_brief(campaign: dict | None) -> str:
+    """Extra instructions from a clipping campaign: who must be the focus, what to look for and what to avoid."""
+    if not campaign:
+        return ""
+    who, mention = campaign.get("streamer", "").strip(), campaign.get("mention", "").strip()
+    lines = ["", "This is for a paid clipping campaign; clips that break its rules earn nothing."]
+    if who:
+        lines.append(f"- The streamer is {who}. Every clip must have {who} as the main focus (their own words, actions and reactions).")
+        lines.append(f"- Never pick moments that show {who} in a negative light, drama, arguments made to look bad, or anything hateful.")
+    if mention:
+        lines.append(f"- Every hook must contain the name \"{mention}\".")
+    for label, key in (("Look for", "lookFor"), ("Avoid", "avoid")):
+        if campaign.get(key, "").strip():
+            lines.append(f"- {label}: {campaign[key].strip()}")
+    return "\n".join(lines) + "\n"
+
+
 def pick(video: Path, key: str, transcript: dict, loud: np.ndarray, top: int = 10, n_candidates: int = 0, on_batch=None,
-         length: str = "auto", count: int | None = None, on_found=None) -> dict:
+         length: str = "auto", count: int | None = None, on_found=None, language: str = "hi", campaign: dict | None = None) -> dict:
     """length: auto/short/long (see LENGTHS). count: exact number of shorts, or None for about one per 5 minutes.
+    language: "hi" (Hinglish stream, Hinglish hooks) or "en". campaign: rules from a clipping campaign (campaign_brief).
     on_found(moments): called after each part with every moment accepted so far, for the live timeline."""
     sig = video.parent / "signals"
     lo_len, hi_len = LENGTHS.get(length, LENGTHS["auto"])
     per_part = PER_PART if not count else max(PER_PART, min(6, -(-count * 2 // max(1, round(len(loud) / (PART - OVERLAP))))))
-    system = SYSTEM_TEMPLATE.format(lo=lo_len, hi=hi_len, per_part=per_part)
+    speaker = "a Hindi/Hinglish gaming streamer" if language == "hi" else "an English-speaking gaming streamer"
+    if campaign and campaign.get("streamer"):
+        speaker += f" ({campaign['streamer']})"
+    hook_style = "casual Roman Hinglish (English letters only)" if language == "hi" else "casual English, the way viewers talk in comments"
+    system = SYSTEM_TEMPLATE.format(lo=lo_len, hi=hi_len, per_part=per_part, speaker=speaker, brief=campaign_brief(campaign), hook_style=hook_style)
     loud_z = score_seconds(loud, [])["loud_z"]
     total = float(len(loud))
     t0 = time.perf_counter()

@@ -91,10 +91,15 @@ def main() -> None:
         if not tfile:
             raise RuntimeError("The transcript of this video is missing, so the short can't be made again.")
         transcript = json.loads(tfile.read_text(encoding="utf-8"))
+        # Projects made from a part of a long stream keep the transcript in part time; shorts use full-video time.
+        offset = float(summary.get("offsetSec") or 0)
+        if offset:
+            transcript = {**transcript, "words": [{**w, "start": w["start"] + offset, "end": w["end"] + offset} for w in transcript["words"]]}
+        language = (summary.get("settings") or {}).get("language") or "hi"
         key = load_key()
 
         start, dur = float(clip["startSec"]), float(clip["durSec"])
-        total = float(summary.get("durationSec") or start + dur)
+        total = float(summary.get("sourceSec") or summary.get("durationSec") or start + dur)
         ds = max(-MAX_SHIFT, min(MAX_SHIFT, float(edits.get("startDelta", 0))))
         de = max(-MAX_SHIFT, min(MAX_SHIFT, float(edits.get("endDelta", 0))))
         new_start, new_end = max(0.0, start + ds), min(total, start + dur + de)
@@ -104,15 +109,15 @@ def main() -> None:
 
         # Caption words: the current ones (with the user's fixes), moved to the new start,
         # plus freshly converted words for any seconds added at either end.
-        base = clip.get("capWords") or clip_caption_words(key, transcript, start, dur)
+        base = clip.get("capWords") or clip_caption_words(key, transcript, start, dur, language)
         words = apply_lines(timed_tokens(clip, base), edits.get("lines") or [])
         shift = new_start - start
         words = [{**w, "start": round(w["start"] - shift, 2), "end": round(min(length, w["end"] - shift), 2)}
                  for w in words if 0 <= w["start"] - shift < length]
         if new_start < start:
-            words = clip_caption_words(key, transcript, new_start, start - new_start) + words
+            words = clip_caption_words(key, transcript, new_start, start - new_start, language) + words
         if new_end > start + dur:
-            tail = clip_caption_words(key, transcript, start + dur, new_end - start - dur)
+            tail = clip_caption_words(key, transcript, start + dur, new_end - start - dur, language)
             words += [{**w, "start": round(w["start"] + start + dur - new_start, 2), "end": round(w["end"] + start + dur - new_start, 2)} for w in tail]
 
         # Layout: the facecam box found when the project was made is reused.
@@ -137,7 +142,7 @@ def main() -> None:
 
         n = int(clip.get("edits", 0)) + 1
         name = re.sub(r"-e\d+$", "", Path(clip["file"]).stem) + f"-e{n}"
-        res = render_short(video, new_start, length, out, name, key, transcript, hook, layout, remote, box, captions, words_override=words)
+        res = render_short(video, new_start, length, out, name, key, transcript, hook, layout, remote, box, captions, words_override=words, language=language)
 
         # Save under the new name (so browsers don't show the old cached video), then remove the old files.
         summary = json.loads((out / "clips.json").read_text(encoding="utf-8"))

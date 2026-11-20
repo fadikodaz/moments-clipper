@@ -11,6 +11,7 @@ Writes: <video folder>/signals/<name>.transcript.json
 
 import argparse
 import json
+import re
 import os
 import subprocess
 import sys
@@ -26,7 +27,17 @@ CHUNK_SEC = 600
 PARALLEL = 4  # pieces sent at the same time
 # Telling Whisper the language and the kind of talk cuts mishearings a lot for Hinglish gaming streams.
 LANGUAGE = "hi"
-PROMPT = "Hindi gaming stream with English words: bhai, guys, yaar, GTA, car, bike, police, race, jump, game, stream, chat, subscribe, okay, come on, let's go."
+PROMPTS = {
+    "hi": "Hindi gaming stream with English words: bhai, guys, yaar, GTA, car, bike, police, race, jump, game, stream, chat, subscribe, okay, come on, let's go.",
+    # Kept short and unlike real speech: Whisper sometimes writes its prompt into the transcript.
+    "en": "GTA livestream with chat.",
+}
+PROMPT = PROMPTS["hi"]
+
+
+def prompt_for(language: str, names: str = "") -> str:
+    """Whisper prompt for the stream's language; names (like the streamer's) help it spell them right."""
+    return (f"{names}. " if names else "") + PROMPTS.get(language, PROMPTS["en"])
 
 
 def load_key() -> str:
@@ -54,14 +65,14 @@ def make_chunk(video: Path, start: int, out: Path) -> None:
     )
 
 
-def transcribe_chunk(key: str, path: Path, model: str) -> dict:
+def transcribe_chunk(key: str, path: Path, model: str, language: str = LANGUAGE, prompt: str = PROMPT) -> dict:
     for attempt in range(4):
         with path.open("rb") as f:
             r = requests.post(
                 API_URL,
                 headers={"Authorization": f"Bearer {key}"},
                 files={"file": (path.name, f, "audio/mpeg")},
-                data=[("model", model), ("language", LANGUAGE), ("prompt", PROMPT), ("response_format", "verbose_json"), ("timestamp_granularities[]", "word"), ("timestamp_granularities[]", "segment")],
+                data=[("model", model), ("language", language), ("prompt", prompt), ("response_format", "verbose_json"), ("timestamp_granularities[]", "word"), ("timestamp_granularities[]", "segment")],
                 timeout=300,
             )
         if r.status_code == 429:  # rate limit on the free tier: wait and retry
@@ -75,7 +86,55 @@ def transcribe_chunk(key: str, path: Path, model: str) -> dict:
     sys.exit("Gave up after repeated rate limits.")
 
 
-def transcribe(video: Path, key: str, model: str = "whisper-large-v3", on_piece=None) -> dict:
+def _norm(t: str) -> str:
+    return re.sub(r"[^a-z0-9']+", " ", t.lower()).strip()
+
+
+def strip_prompt_echo(res: dict, prompt: str) -> dict:
+    """Whisper now and then 'hears' its own prompt at the start of a piece. Remove any run of
+    3 or more words that copies the prompt word for word, from the words and from the lines."""
+    pw = _norm(prompt).split()
+
+    def echo(tokens: list[str]) -> int:
+        best = 0
+        for i in range(len(pw)):
+            k = 0
+            while k < len(tokens) and i + k < len(pw) and tokens[k] == pw[i + k]:
+                k += 1
+            best = max(best, k)
+        return best
+
+    words = res.get("words", [])
+    toks = [_norm(w["word"]) for w in words]
+    # Only the opening of a piece: real speech can contain prompt phrases ("come on, let's go") later on.
+    first = res.get("segments") or [{"end": 10.0}]
+    limit = sum(1 for w in words if w["start"] <= first[0]["end"])
+    keep, i = [True] * len(words), 0
+    while i < limit:
+        k = echo(toks[i: i + 40])
+        if k >= 3:
+            keep[i: i + k] = [False] * k
+            i += k
+        else:
+            i += 1
+    segs = []
+    for n, s in enumerate(res.get("segments", [])):
+        parts = s["text"].split()
+        # In the first line, drop leading words copied from the prompt (as many as their run).
+        k = 0
+        while n == 0 and k < len(parts) and echo([_norm(x) for x in parts[: k + 1]]) == k + 1:
+            k += 1
+        if k >= 3:
+            parts = parts[k:]
+        if parts:
+            segs.append({**s, "text": " ".join(parts)})
+    dropped = keep.count(False)
+    if dropped:
+        print(f"  removed {dropped} words Whisper copied from its prompt", flush=True)
+    return {**res, "words": [w for w, ok in zip(words, keep) if ok], "segments": segs}
+
+
+def transcribe(video: Path, key: str, model: str = "whisper-large-v3", on_piece=None, language: str = LANGUAGE, prompt: str | None = None) -> dict:
     out_dir = video.parent / "signals"
     tmp = out_dir / "chunks"
     tmp.mkdir(parents=True, exist_ok=True)
@@ -83,7 +142,8 @@ def transcribe(video: Path, key: str, model: str = "whisper-large-v3", on_piece=
     total = duration(video)
     words, segments, languages = [], [], []
     t0 = time.perf_counter()
-    starts = list(range(0, int(total) + 1, CHUNK_SEC))
+    # Skip a last piece under 2 seconds (e.g. a part of exactly 30:00): it is empty and Whisper rejects it.
+    starts = [s for s in range(0, int(total) + 1, CHUNK_SEC) if total - s >= 2]
     done = 0
     lock = threading.Lock()
 
@@ -92,7 +152,8 @@ def transcribe(video: Path, key: str, model: str = "whisper-large-v3", on_piece=
         part = tmp / f"chunk_{i:03d}.mp3"
         make_chunk(video, start, part)
         t = time.perf_counter()
-        res = transcribe_chunk(key, part, model)
+        p = prompt or prompt_for(language)
+        res = strip_prompt_echo(transcribe_chunk(key, part, model, language, p), p)
         print(f"  piece {i + 1}: {start // 60}-{min(total, start + CHUNK_SEC) // 60:.0f} min, {len(res.get('words', []))} words, {time.perf_counter() - t:.1f} s", flush=True)
         with lock:
             done += 1

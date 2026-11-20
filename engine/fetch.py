@@ -19,7 +19,8 @@ from pathlib import Path
 
 # 720p H.264 + AAC: plays everywhere, decodes fast, and keeps transfers small.
 VIDEO_FORMAT = "bv*[height<=720][vcodec^=avc1]+ba[ext=m4a]/b[height<=720][vcodec^=avc1]/bv*[height<=720]+ba/b[height<=720]"
-AUDIO_FORMAT = "ba[ext=m4a]/ba"
+# Smallest AAC first (about 20 MB per hour): speech-to-text only needs 16 kHz anyway.
+AUDIO_FORMAT = "139/ba[ext=m4a]/ba"
 BASE = [sys.executable, "-m", "yt_dlp", "--no-warnings", "--no-playlist", "--js-runtimes", "node", "--retries", "5", "--fragment-retries", "5"]
 ATTEMPTS = 3  # YouTube randomly refuses a download address (HTTP 403); a fresh request usually works
 
@@ -64,11 +65,11 @@ def info(url: str, fmt: str = VIDEO_FORMAT) -> dict:
 PERMANENT = ("age-restricted", "private", "members", "unavailable", "live")
 
 
-def _download(url: str, fmt: str, out: Path, on_progress=None, merge: bool = False, on_retry=None) -> Path:
+def _download(url: str, fmt: str, out: Path, on_progress=None, merge: bool = False, on_retry=None, section: tuple[float, float] | None = None) -> Path:
     """Retries with a fresh request when YouTube refuses; permanent problems (private, age) fail at once."""
     for attempt in range(1, ATTEMPTS + 1):
         try:
-            return _download_once(url, fmt, out, on_progress, merge)
+            return _download_once(url, fmt, out, on_progress, merge, section)
         except FetchError as e:
             if attempt == ATTEMPTS or any(w in str(e).lower() for w in PERMANENT):
                 raise
@@ -81,11 +82,13 @@ def _download(url: str, fmt: str, out: Path, on_progress=None, merge: bool = Fal
     raise FetchError("unreachable")
 
 
-def _download_once(url: str, fmt: str, out: Path, on_progress=None, merge: bool = False) -> Path:
+def _download_once(url: str, fmt: str, out: Path, on_progress=None, merge: bool = False, section: tuple[float, float] | None = None) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     args = BASE + ["-f", fmt, "--newline", "--progress-template", "download:PCT %(progress._percent_str)s", "-o", str(out.with_suffix(".%(ext)s"))]
     if merge:
         args += ["--merge-output-format", "mp4"]
+    if section:  # only this part of a long stream (seconds from the start)
+        args += ["--download-sections", f"*{int(section[0])}-{int(section[1])}"]
     p = subprocess.Popen(args + [url], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     for line in p.stdout:  # type: ignore[union-attr]
         m = re.search(r"PCT\s+([\d.]+)%", line)
@@ -101,8 +104,8 @@ def _download_once(url: str, fmt: str, out: Path, on_progress=None, merge: bool 
     return files[0]
 
 
-def download_audio(url: str, out: Path, on_progress=None, on_retry=None) -> Path:
-    return _download(url, AUDIO_FORMAT, out, on_progress, on_retry=on_retry)
+def download_audio(url: str, out: Path, on_progress=None, on_retry=None, section: tuple[float, float] | None = None) -> Path:
+    return _download(url, AUDIO_FORMAT, out, on_progress, on_retry=on_retry, section=section)
 
 
 def download_video(url: str, out: Path, on_progress=None, on_retry=None) -> Path:

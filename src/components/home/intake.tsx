@@ -1,14 +1,26 @@
 "use client";
 
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { FileVideo, Link2, LoaderCircle, Sparkles, Upload } from "lucide-react";
 import { btn, btnCta, btnGhost, btnLg, btnPrimary, btnSm, field, formatTime } from "@/components/kit";
+import type { Campaign } from "@/lib/jobs";
 import { cn } from "@/lib/utils";
 
 type LinkInfo = { url: string; title: string; channel: string; durationSec: number; thumbnail: string | null };
 type Picked = { kind: "link"; info: LinkInfo } | { kind: "file"; file: File };
-type Options = { length: string; count: string; captions: string; layout: string };
+type Options = { length: string; count: string; captions: string; layout: string; language: string; campaignId: string; from: string; to: string };
+
+const PART_MAX = 4 * 3600;
+
+/** "1:30:00", "90:00" or "90" (minutes) to seconds; empty is null; anything else NaN. */
+function parseClock(v: string): number | null {
+  const s = v.trim();
+  if (!s) return null;
+  if (/^\d+$/.test(s)) return Number(s) * 60;
+  if (!/^\d+(:\d{1,2}){1,2}$/.test(s)) return NaN;
+  return s.split(":").reduce((t, x) => t * 60 + Number(x), 0);
+}
 
 const VIDEO = /\.(mp4|mov|mkv|webm)$/i;
 
@@ -27,7 +39,19 @@ export function Intake() {
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [picked, setPicked] = useState<Picked | null>(null);
-  const [opts, setOpts] = useState<Options>({ length: "auto", count: "0", captions: "bold", layout: "auto" });
+  const [opts, setOpts] = useState<Options>({ length: "auto", count: "0", captions: "bold", layout: "auto", language: "hi", campaignId: "", from: "", to: "" });
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+
+  useEffect(() => {
+    fetch("/api/campaigns", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((list: Campaign[]) => {
+        setCampaigns(list);
+        // The newest campaign is the one you are most likely clipping for.
+        if (list[0]) setOpts((o) => ({ ...o, campaignId: list[0].id, language: list[0].language }));
+      })
+      .catch(() => {});
+  }, []);
   const [upload, setUpload] = useState<number | null>(null);
   const [starting, setStarting] = useState(false);
 
@@ -40,7 +64,12 @@ export function Intake() {
       const r = await fetch(`/api/link?url=${encodeURIComponent(v)}`);
       const body = await r.json();
       if (!r.ok) setError(body.error ?? "Couldn't read this link.");
-      else setPicked({ kind: "link", info: body as LinkInfo });
+      else {
+        const info = body as LinkInfo;
+        setPicked({ kind: "link", info });
+        // Long streams are made in parts of up to 4 hours; start with the first part.
+        setOpts((o) => ({ ...o, from: info.durationSec > PART_MAX ? "0:00:00" : "", to: info.durationSec > PART_MAX ? formatTime(PART_MAX) : "" }));
+      }
     } catch {
       setError("Couldn't reach the app. Is it still running?");
     }
@@ -62,17 +91,35 @@ export function Intake() {
     setUrl("");
   }
 
+  const from = parseClock(opts.from);
+  const to = parseClock(opts.to);
+  const total = picked?.kind === "link" ? picked.info.durationSec : null;
+  const partError =
+    Number.isNaN(from) || Number.isNaN(to)
+      ? "Write times like 1:30:00 (hours:minutes:seconds)."
+      : from === null && to === null
+        ? total && total > PART_MAX
+          ? "This video is longer than 4 hours. Choose a part of up to 4 hours."
+          : null
+        : (to ?? total ?? 0) - (from ?? 0) < 60
+          ? "The part must be at least 1 minute long."
+          : (to ?? total ?? Infinity) - (from ?? 0) > PART_MAX
+            ? "A part can be at most 4 hours long. Make the rest in another project."
+            : null;
+
   async function start() {
     if (!picked) return;
+    if (partError) return setError(partError);
     setError(null);
     setStarting(true);
+    const send = { ...opts, from: from === null && to === null ? "" : String(from ?? 0), to: from === null && to === null ? "" : String(to ?? total ?? (from ?? 0) + PART_MAX) };
     if (picked.kind === "link") {
       try {
         const { info } = picked;
         const r = await fetch("/api/jobs", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: info.url, title: info.title, thumbnail: info.thumbnail, durationSec: info.durationSec, ...opts, count: Number(opts.count) }),
+          body: JSON.stringify({ url: info.url, title: info.title, thumbnail: info.thumbnail, durationSec: info.durationSec, ...send, count: Number(opts.count) }),
         });
         const body = await r.json();
         if (r.status === 201 && body.id) return router.push(`/p/${body.id}`);
@@ -85,7 +132,7 @@ export function Intake() {
     }
     // Files go as the raw request body; XMLHttpRequest because fetch can't report upload progress.
     const { file } = picked;
-    const q = new URLSearchParams({ name: file.name, ...opts });
+    const q = new URLSearchParams({ name: file.name, ...send });
     const req = new XMLHttpRequest();
     xhr.current = req;
     req.open("POST", `/api/jobs?${q}`);
@@ -189,6 +236,32 @@ export function Intake() {
           </div>
 
           <div className="grid grid-cols-2 gap-3 px-2 pt-4 pb-2 md:grid-cols-4">
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Campaign</span>
+              <select
+                value={opts.campaignId}
+                disabled={starting}
+                onChange={(e) => {
+                  const c = campaigns.find((x) => x.id === e.target.value);
+                  setOpts((o) => ({ ...o, campaignId: e.target.value, language: c?.language ?? o.language }));
+                }}
+                className={field}
+              >
+                <option value="">None</option>
+                {campaigns.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Language spoken</span>
+              <select value={opts.language} disabled={starting || !!opts.campaignId} onChange={(e) => setOpts((o) => ({ ...o, language: e.target.value }))} className={field}>
+                <option value="en">English</option>
+                <option value="hi">Hindi / Hinglish</option>
+              </select>
+            </label>
             {select("length", "Clip length", [
               ["auto", "Auto (60 s to 2 min)"],
               ["short", "Short (30 to 60 s)"],
@@ -209,6 +282,20 @@ export function Intake() {
               ["auto", "Find it for me"],
               ["none", "No facecam"],
             ])}
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">From (optional)</span>
+              <input value={opts.from} disabled={starting} onChange={(e) => setOpts((o) => ({ ...o, from: e.target.value }))} placeholder="0:00:00" inputMode="numeric" className={field} />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">To (optional)</span>
+              <input value={opts.to} disabled={starting} onChange={(e) => setOpts((o) => ({ ...o, to: e.target.value }))} placeholder={total ? formatTime(Math.min(total, PART_MAX)) : "end"} inputMode="numeric" className={field} />
+            </label>
+            <p className={cn("col-span-2 self-end pb-2 text-xs md:col-span-2", partError ? "text-bad" : "text-subtle")}>
+              {partError ??
+                (total && total > PART_MAX
+                  ? `This stream is ${formatTime(total)} long. Make it in parts of up to 4 hours: next time start From where this part ends.`
+                  : "Leave empty to use the whole video.")}
+            </p>
           </div>
 
           {upload !== null ? (

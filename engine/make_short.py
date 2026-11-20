@@ -154,10 +154,11 @@ def split_tokens(words: list[dict]) -> list[dict]:
     return [w for w in out if w]
 
 
-def clip_caption_words(key: str, transcript: dict, start: float, length: float) -> list[dict]:
-    """Words spoken between start and start+length, in Roman Hinglish, times relative to start."""
+def clip_caption_words(key: str, transcript: dict, start: float, length: float, language: str = "hi") -> list[dict]:
+    """Words spoken between start and start+length, times relative to start.
+    Hindi streams are turned into Roman Hinglish; English is used as heard."""
     words = [w for w in transcript["words"] if start <= w["start"] < start + length]
-    roman = to_roman(key, [w["word"] for w in words]) if words else []
+    roman = (to_roman(key, [w["word"] for w in words]) if language == "hi" else [w["word"] for w in words]) if words else []
     return split_tokens([{"text": r, "start": round(w["start"] - start, 2), "end": round(w["end"] - start, 2)} for w, r in zip(words, roman)])
 
 
@@ -225,7 +226,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 def render_short(video: Path | None, start: float, length: float, out_dir: Path, name: str, key: str, transcript: dict,
                  hook: str | None = None, layout: str = "top-right", remote: dict | None = None, box: dict | None = None,
-                 captions: str = "bold", words_override: list[dict] | None = None) -> dict:
+                 captions: str = "bold", words_override: list[dict] | None = None, language: str = "hi") -> dict:
     """Make one finished short. Returns the caption words and timings.
 
     remote: direct stream addresses from fetch.remote_source(); FFmpeg then reads only this
@@ -239,8 +240,8 @@ def render_short(video: Path | None, start: float, length: float, out_dir: Path,
     if words_override is not None:
         clip_words = words_override
     else:
-        clip_words = clip_caption_words(key, transcript, start, length)
-        hook = roman_line(key, hook) if hook else None
+        clip_words = clip_caption_words(key, transcript, start, length, language)
+        hook = (roman_line(key, hook) if language == "hi" else hook) if hook else None
     timings["hinglish_s"] = round(time.perf_counter() - t, 1)
 
     ass = out_dir / f"{name}.ass"

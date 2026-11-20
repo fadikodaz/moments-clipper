@@ -1,4 +1,4 @@
-import { FolderOpen, Plus, type LucideIcon } from "lucide-react";
+import { FolderOpen, Megaphone, Plus, type LucideIcon } from "lucide-react";
 
 export type NavItem = { label: string; href: string; icon: LucideIcon };
 
@@ -6,6 +6,7 @@ export type NavItem = { label: string; href: string; icon: LucideIcon };
 export const NAV: NavItem[] = [
   { label: "New clips", href: "/", icon: Plus },
   { label: "Projects", href: "/projects", icon: FolderOpen },
+  { label: "Campaigns", href: "/campaigns", icon: Megaphone },
 ];
 
 export function isActive(pathname: string, href: string) {

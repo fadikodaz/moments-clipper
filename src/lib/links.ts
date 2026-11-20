@@ -9,7 +9,7 @@ const HOSTS: Record<LinkPlatform, string[]> = {
   twitch: ["twitch.tv"],
   kick: ["kick.com"],
 };
-const MAX_SECONDS = 4 * 3600;
+const MAX_SECONDS = 24 * 3600; // longer streams are made in parts of up to 4 hours
 
 /** Normalise what people paste ("youtu.be/x", "www.youtube.com/watch?v=x&list=…") into a URL + platform. */
 export function parseLink(raw: string): { url: string; platform: LinkPlatform } | null {
@@ -65,7 +65,7 @@ export function getLinkInfo(url: string): Promise<LinkInfo> {
         if (j._type === "playlist") return reject(new LinkError("That's a playlist. Paste the link of one video."));
         if (j.live_status === "is_live" || j.live_status === "is_upcoming") return reject(new LinkError("This stream is still live. Paste the link again once it has ended."));
         const durationSec = Math.round(j.duration ?? 0);
-        if (durationSec > MAX_SECONDS) return reject(new LinkError("Videos up to 4 hours are supported for now."));
+        if (durationSec > MAX_SECONDS) return reject(new LinkError("Videos up to 24 hours are supported."));
         if (durationSec < 60) return reject(new LinkError("This video is under a minute. Paste a longer one, like a stream or a gameplay session."));
         resolve({ url, platform: "youtube", title: j.title ?? "YouTube video", channel: j.channel ?? j.uploader ?? "", durationSec, thumbnail: j.thumbnail ?? null });
       } catch {

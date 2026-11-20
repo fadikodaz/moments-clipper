@@ -107,13 +107,13 @@ export function ShortsView({ jobId, meta, result, initialReview, notice, locked,
   const copy = useCallback(
     async (s: Short) => {
       try {
-        await navigator.clipboard.writeText(postCaption(s));
+        await navigator.clipboard.writeText(postCaption(s, meta.campaign));
         toast.show("Caption copied. Paste it when you post.");
       } catch {
         toast.show("Couldn't copy. Your browser blocked the clipboard.");
       }
     },
-    [toast],
+    [toast, meta.campaign],
   );
 
   async function saveName(value: string) {
@@ -158,6 +158,7 @@ export function ShortsView({ jobId, meta, result, initialReview, notice, locked,
           locked={locked}
           onChanged={onReload}
           toast={toast.show}
+          campaign={meta.campaign}
           short={watching}
           list={shown.some((s) => s.id === watching.id) ? shown : list}
           best={best}

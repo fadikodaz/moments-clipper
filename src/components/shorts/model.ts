@@ -1,4 +1,4 @@
-import type { EngineClip, ReviewMap } from "@/lib/jobs";
+import type { Campaign, EngineClip, ReviewMap } from "@/lib/jobs";
 
 export type Short = EngineClip & { videoUrl: string; posterUrl: string; downloadName: string };
 export type Sort = "best" | "time";
@@ -18,38 +18,51 @@ export function visibleShorts(all: Short[], review: ReviewMap, hidden: boolean, 
   return list.sort((a, b) => (sort === "best" ? b.score - a.score : a.startSec - b.startSec));
 }
 
-function hashtags(s: Short, n: number) {
-  return [...s.tags, "gaming", "shorts"]
+/** What a campaign adds to every caption. */
+export type CampaignRules = Pick<Campaign, "mention" | "hashtags" | "extraTags"> | null | undefined;
+
+/** Campaign hashtags first (exactly as required), then the campaign's extras, then ones from the short. */
+function hashtags(s: Short, n: number, c: CampaignRules) {
+  const required = c?.hashtags ?? [];
+  const rest = [...(c?.extraTags ?? []).map((t) => t.replace(/^#/, "")), ...s.tags, "gaming", "shorts"]
     .map((t) => t.toLowerCase().replace(/[^a-z0-9]/g, ""))
-    .filter((t, i, all) => t && all.indexOf(t) === i)
-    .slice(0, n)
-    .map((t) => `#${t}`)
-    .join(" ");
+    .filter((t) => t && !required.some((r) => r.slice(1).toLowerCase() === t));
+  const unique = rest.filter((t, i) => rest.indexOf(t) === i).map((t) => `#${t}`);
+  return [...required, ...unique].slice(0, Math.max(n, required.length)).join(" ");
 }
 
-export type Platform = "tiktok" | "shorts" | "reels";
+/** Makes sure the text names who the campaign is about. */
+function named(text: string, c: CampaignRules) {
+  const m = c?.mention?.trim();
+  return !m || text.toLowerCase().includes(m.toLowerCase()) ? text : `${m}: ${text}`;
+}
+
+export type Platform = "tiktok" | "shorts" | "reels" | "x";
 export const PLATFORMS: [Platform, string][] = [
   ["tiktok", "TikTok"],
   ["shorts", "YouTube Shorts"],
   ["reels", "Instagram Reels"],
+  ["x", "X"],
 ];
 
 /** Ready-to-paste text for each platform, written from the AI's title, opening line and reason. */
-export function postKit(s: Short): Record<Platform, [label: string, text: string][]> {
-  const opener = s.hook?.trim() || s.title;
+export function postKit(s: Short, c?: CampaignRules): Record<Platform, [label: string, text: string][]> {
+  const opener = named(s.hook?.trim() || s.title, c);
+  const title = named(s.title, c);
   return {
-    tiktok: [["Caption", `${opener} ${hashtags(s, 5)}`]],
+    tiktok: [["Caption", `${opener} ${hashtags(s, 5, c)}`]],
     shorts: [
-      ["Title", s.title.slice(0, 100)],
-      ["Description", `${s.reason}\n\n${hashtags(s, 8)}`],
+      ["Title", `${title.slice(0, 90)} ${hashtags(s, 0, c)}`.trim().slice(0, 100)],
+      ["Description", `${named(s.reason, c)}\n\n${hashtags(s, 8, c)}`],
     ],
-    reels: [["Caption", `${opener}\n\n${s.reason}\n\n${hashtags(s, 8)}`]],
+    reels: [["Caption", `${opener}\n\n${s.reason}\n\n${hashtags(s, 8, c)}`]],
+    x: [["Post", `${opener} ${hashtags(s, 3, c)}`]],
   };
 }
 
 /** The one caption the quick "Copy caption" buttons use (TikTok style, fits everywhere). */
-export function postCaption(s: Short) {
-  return postKit(s).tiktok[0][1];
+export function postCaption(s: Short, c?: CampaignRules) {
+  return postKit(s, c).tiktok[0][1];
 }
 
 /** Caption words in lines of five, each with the time it appears and its word range (for remake edits). */
