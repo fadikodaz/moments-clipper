@@ -1,6 +1,7 @@
 "use client";
 
-import { Fragment, useEffect, useState, type CSSProperties } from "react";
+import { Fragment, useEffect, useRef, useState, type CSSProperties } from "react";
+import { cn } from "@/lib/utils";
 import { censor, cssFont, usesCam, type Box, type Style } from "./style";
 
 const PW = 288;
@@ -36,8 +37,15 @@ export function gameBand(s: Style): Box {
 }
 
 /** Live phone-sized preview of a short with the chosen look, drawn from one frame of the video. */
-export function PhonePreview({ style: s, frame, cam, hook }: { style: Style; frame: string | null; cam: Box | null; hook: string }) {
+export function PhonePreview({ style: s, frame, cam, hook, onCaptionY }: { style: Style; frame: string | null; cam: Box | null; hook: string; onCaptionY?: (y: number) => void }) {
   const [tick, setTick] = useState(0);
+  const phone = useRef<HTMLDivElement>(null);
+  const [dragging, setDragging] = useState(false);
+  // Captions can be dragged up and down when onCaptionY is given.
+  const moveTo = (clientY: number) => {
+    const r = phone.current?.getBoundingClientRect();
+    if (r && onCaptionY) onCaptionY(Math.round(Math.max(20, Math.min(85, ((clientY - r.top) / r.height) * 100 - 2))));
+  };
   useEffect(() => {
     const t = window.setInterval(() => setTick((n) => n + 1), 450);
     return () => window.clearInterval(t);
@@ -93,7 +101,7 @@ export function PhonePreview({ style: s, frame, cam, hook }: { style: Style; fra
   };
 
   return (
-    <div className="relative h-[512px] w-[288px] shrink-0 overflow-hidden rounded-[26px] border border-border-strong bg-black shadow-[0_30px_80px_rgb(0_0_0/0.55)]" aria-label="Preview of a short">
+    <div ref={phone} className="relative h-[512px] w-[288px] shrink-0 overflow-hidden rounded-[26px] border border-border-strong bg-black shadow-[0_30px_80px_rgb(0_0_0/0.55)]" aria-label="Preview of a short">
       {parts.map((p) => (
         <div key={p.key} className={p.className} style={p.style} />
       ))}
@@ -107,7 +115,27 @@ export function PhonePreview({ style: s, frame, cam, hook }: { style: Style; fra
       )}
       {c.style !== "none" && (
         <div
-          className="pointer-events-none absolute inset-x-3.5 text-center leading-[1.12]"
+          onPointerDown={(e) => {
+            if (!onCaptionY) return;
+            e.currentTarget.setPointerCapture(e.pointerId);
+            setDragging(true);
+          }}
+          onPointerMove={(e) => dragging && moveTo(e.clientY)}
+          onPointerUp={() => setDragging(false)}
+          onKeyDown={(e) => {
+            if (!onCaptionY || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+            e.preventDefault();
+            onCaptionY(Math.max(20, Math.min(85, c.y + (e.key === "ArrowUp" ? -2 : 2))));
+          }}
+          tabIndex={onCaptionY ? 0 : undefined}
+          role={onCaptionY ? "slider" : undefined}
+          aria-label={onCaptionY ? "Caption height: drag or use the arrow keys" : undefined}
+          aria-valuenow={onCaptionY ? c.y : undefined}
+          className={cn(
+            "absolute inset-x-3.5 text-center leading-[1.12]",
+            onCaptionY ? "cursor-ns-resize touch-none rounded-md outline-2 outline-offset-4 outline-white/0 outline-dashed hover:outline-white/60 focus-visible:outline-white/80" : "pointer-events-none",
+            dragging && "outline-white/80",
+          )}
           style={{
             top: `${c.y}%`,
             fontFamily: cssFont(c.font),

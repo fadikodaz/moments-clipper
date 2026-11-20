@@ -1,6 +1,6 @@
 import type { Campaign, EngineClip, ReviewMap } from "@/lib/jobs";
 
-export type Short = EngineClip & { videoUrl: string; posterUrl: string; downloadName: string };
+export type Short = EngineClip & { videoUrl: string; posterUrl: string; frameUrl: string | null; downloadName: string };
 export type Sort = "best" | "time";
 
 export function toShorts(jobId: string, clips: EngineClip[]): Short[] {
@@ -8,6 +8,7 @@ export function toShorts(jobId: string, clips: EngineClip[]): Short[] {
     ...c,
     videoUrl: `/api/jobs/${jobId}/files/${c.file}`,
     posterUrl: `/api/jobs/${jobId}/files/${c.poster}`,
+    frameUrl: c.frame ? `/api/jobs/${jobId}/files/${c.frame}` : null,
     downloadName: `${c.title.replace(/[^\w\s-]/g, "").trim() || c.id}.mp4`,
   }));
 }

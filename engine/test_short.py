@@ -57,6 +57,7 @@ def main() -> None:
         render_short(None if remote else Path(a.source), a.second, length, out, name, load_key(), {"words": []}, a.hook,
                      remote=remote, box=box, words_override=words, style=style, zooms=[(1.5, 3.0)], language="en")
         (out / f"{name}.jpg").unlink(missing_ok=True)
+        (out / f"{name}.frame.jpg").unlink(missing_ok=True)
         (out / f"{name}.ass").unlink(missing_ok=True)
         write(state, {"state": "done", "file": f"{name}.mp4", "updated": time.time()})
     except BaseException as e:

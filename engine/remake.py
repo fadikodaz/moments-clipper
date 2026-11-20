@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 import traceback
 from pathlib import Path
@@ -22,7 +23,7 @@ from pathlib import Path
 from fetch import remote_source
 from make_short import clip_caption_words, render_short
 from style import normalize
-from transcribe import load_key
+from transcribe import load_key, scrub
 
 MAX_SHIFT = 30          # seconds the start or end may move either way
 MIN_LENGTH = 5
@@ -50,6 +51,13 @@ def timed_tokens(clip: dict, base: list[dict]) -> list[dict]:
     if len(shown) == len(base):
         return [{**b, "text": s} for s, b in zip(shown, base)]
     return [{**base[min(len(base) - 1, k * len(base) // len(shown))], "text": s} for k, s in enumerate(shown)]
+
+
+def _kept_mask(words: list[dict]) -> list[bool]:
+    """Which caption words survive the Whisper-instruction clean-up (same order)."""
+    marked = [{"word": w["text"], "i": i} for i, w in enumerate(words)]
+    kept = {x["i"] for x in scrub({"words": marked, "segments": []})["words"]}
+    return [i in kept for i in range(len(words))]
 
 
 def apply_lines(words: list[dict], lines: list[dict]) -> list[dict]:
@@ -81,6 +89,17 @@ def remake_one(job_dir: Path, clip_id: str, edits: dict) -> bool:
     def status(state: str, error: str | None = None) -> None:
         write_json(state_file, {"state": state, "error": error, "started": started, "updated": time.time(), "pid": os.getpid()})
 
+    # Heartbeat: on a slow connection a remake can take many minutes; the website must see it is alive.
+    alive = threading.Event()
+
+    def beat() -> None:
+        while not alive.wait(20):
+            try:
+                status("running")
+            except Exception:
+                pass
+
+    threading.Thread(target=beat, daemon=True).start()
     try:
         status("running")
         summary = json.loads((out / "clips.json").read_text(encoding="utf-8"))
@@ -97,6 +116,8 @@ def remake_one(job_dir: Path, clip_id: str, edits: dict) -> bool:
         if offset:
             transcript = {**transcript, "words": [{**w, "start": w["start"] + offset, "end": w["end"] + offset} for w in transcript["words"]]}
         language = (summary.get("settings") or {}).get("language") or "hi"
+        if language != "hi":
+            transcript = scrub(transcript)
         key = load_key()
 
         start, dur = float(clip["startSec"]), float(clip["durSec"])
@@ -112,6 +133,8 @@ def remake_one(job_dir: Path, clip_id: str, edits: dict) -> bool:
         # plus freshly converted words for any seconds added at either end.
         base = clip.get("capWords") or clip_caption_words(key, transcript, start, dur, language)
         words = apply_lines(timed_tokens(clip, base), edits.get("lines") or [])
+        if language != "hi":  # captions saved before the echo clean-up may still contain Whisper's instructions
+            words = [w for w, ok in zip(words, _kept_mask(words)) if ok]
         shift = new_start - start
         words = [{**w, "start": round(w["start"] - shift, 2), "end": round(min(length, w["end"] - shift), 2)}
                  for w in words if 0 <= w["start"] - shift < length]
@@ -148,16 +171,26 @@ def remake_one(job_dir: Path, clip_id: str, edits: dict) -> bool:
 
         n = int(clip.get("edits", 0)) + 1
         name = re.sub(r"-e\d+$", "", Path(clip["file"]).stem) + f"-e{n}"
-        res = render_short(video, new_start, length, out, name, key, transcript, hook, layout, remote, box, captions, words_override=words, language=language,
-                           style=style, peak=peak, zooms=zooms)
+        res = None
+        for attempt in (1, 2):  # YouTube now and then refuses one read (HTTP 403): a fresh address usually works
+            try:
+                res = render_short(video, new_start, length, out, name, key, transcript, hook, layout, remote, box, captions, words_override=words,
+                                   language=language, style=style, peak=peak, zooms=zooms)
+                break
+            except RuntimeError as e:
+                print(f"    remake attempt {attempt} failed: {str(e)[:200]}", flush=True)
+                if attempt == 2:
+                    raise
+                if remote:
+                    remote = remote_source(meta["url"])
 
         # Save under the new name (so browsers don't show the old cached video), then remove the old files.
         summary = json.loads((out / "clips.json").read_text(encoding="utf-8"))
         clip = next(c for c in summary["clips"] if c["id"] == clip_id)
-        old = [clip["file"], clip["poster"], Path(clip["file"]).with_suffix(".ass").name]
+        old = [clip["file"], clip["poster"], Path(clip["file"]).with_suffix(".ass").name] + ([clip["frame"]] if clip.get("frame") else [])
         clip.update({"file": res["file"], "poster": res["poster"], "startSec": round(new_start, 2), "durSec": round(length, 2),
                      "hook": hook or "", "words": " ".join(w["text"] for w in words), "capWords": words,
-                     "layout": choice, "captions": captions, "style": res["style"], "edits": n})
+                     "layout": choice, "captions": captions, "style": res["style"], "frame": res.get("frame"), "edits": n})
         write_json(out / "clips.json", summary)
         tl_file = out / "timeline.json"
         if tl_file.exists():
@@ -171,15 +204,19 @@ def remake_one(job_dir: Path, clip_id: str, edits: dict) -> bool:
                 (out / f).unlink(missing_ok=True)
             except PermissionError:  # still being streamed to a browser; harmless leftover
                 pass
+        alive.set()
         status("done")
         print(f"Remade {clip_id}: {fmt_s(new_start)} for {length:.1f} s, layout {layout}, captions {captions}", flush=True)
     except BaseException as e:
         traceback.print_exc()
         msg = str(e) or e.__class__.__name__
+        alive.set()
         status("failed", "Making the short again failed while cutting the video. Try once more." if msg.startswith("FFmpeg") else msg[-400:])
         if isinstance(e, KeyboardInterrupt):
             raise
         return False
+    finally:
+        alive.set()
     return True
 
 

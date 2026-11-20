@@ -1,4 +1,4 @@
-import { cancelJob, deleteJob, getJob, getResult, getReview, getTimeline, renameJob, retryJob } from "@/lib/jobs";
+import { cancelJob, deleteJob, getJob, getProbe, getResult, getReview, getTimeline, renameJob, retryJob } from "@/lib/jobs";
 
 /** Job status, every short that is already finished, and the timeline for the progress page. */
 export async function GET(_request: Request, ctx: RouteContext<"/api/jobs/[id]">) {
@@ -6,9 +6,10 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/jobs/[id]">
   const job = await getJob(id);
   if (!job) return Response.json({ error: "Job not found" }, { status: 404 });
   // Finished shorts appear here one by one while the rest are still being made.
-  const [result, review, timeline] = await Promise.all([getResult(id), getReview(id), getTimeline(id)]);
+  const [result, review, timeline, probe] = await Promise.all([getResult(id), getReview(id), getTimeline(id), getProbe(id)]);
   if (result) result.clips = result.clips.filter((c) => review[c.id] !== "deleted");
-  return Response.json({ ...job, result, review, timeline }, { headers: { "Cache-Control": "no-store" } });
+  const frames = (probe?.frames ?? []).map((f) => ({ url: `/api/jobs/${id}/files/${f.file}`, t: f.t }));
+  return Response.json({ ...job, result, review, timeline, frames }, { headers: { "Cache-Control": "no-store" } });
 }
 
 /** Rename: PATCH { name }. Stop a running job: PATCH { action: "cancel" }. */

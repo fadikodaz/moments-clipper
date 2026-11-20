@@ -125,6 +125,8 @@ export type EngineClip = {
   edits?: number;
   /** Its full look (engine/style.py). */
   style?: Record<string, unknown>;
+  /** Full-size picture of the source at this moment, for the Edit tab's live preview. */
+  frame?: string | null;
 };
 export type EngineResult = {
   video: string;
@@ -567,7 +569,7 @@ export async function startProbe(id: string) {
 
 export async function getProbe(id: string) {
   const p = await readJson<Probe>(path.join(setupDir(id), "probe.json"));
-  if (p?.state === "running" && p.started && Date.now() / 1000 - p.started > 240) return { ...p, state: "failed", error: "Reading the video took too long. Try again." } as Probe;
+  if (p?.state === "running" && p.started && Date.now() / 1000 - p.started > 900) return { ...p, state: "failed", error: "Reading the video took too long. Try again." } as Probe;
   return p;
 }
 
@@ -591,7 +593,7 @@ export async function startTest(id: string, style: unknown, second: number, hook
 
 export async function getTest(id: string) {
   const t = await readJson<TestRender>(path.join(setupDir(id), "test.json"));
-  if (t?.state === "running" && t.started && Date.now() / 1000 - t.started > 180) return { ...t, state: "failed", error: "The test took too long. Try again." } as TestRender;
+  if (t?.state === "running" && t.started && Date.now() / 1000 - t.started > 600) return { ...t, state: "failed", error: "The test took too long. Try again." } as TestRender;
   return t;
 }
 
@@ -636,7 +638,7 @@ export type RemakeAllStatus = { state: "running" | "done" | "failed"; done: numb
 export async function getRemakeAll(id: string): Promise<RemakeAllStatus | null> {
   if (!isJobId(id)) return null;
   const s = await readJson<RemakeAllStatus>(path.join(outDir(id), "remake-all.json"));
-  if (s?.state === "running" && s.updated && Date.now() / 1000 - s.updated > 300) return { ...s, state: "failed", error: "Making the shorts again stopped unexpectedly." };
+  if (s?.state === "running" && s.updated && Date.now() / 1000 - s.updated > 900) return { ...s, state: "failed", error: "Making the shorts again stopped unexpectedly." };
   return s;
 }
 

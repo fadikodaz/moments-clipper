@@ -29,15 +29,64 @@ PARALLEL = 4  # pieces sent at the same time
 LANGUAGE = "hi"
 PROMPTS = {
     "hi": "Hindi gaming stream with English words: bhai, guys, yaar, GTA, car, bike, police, race, jump, game, stream, chat, subscribe, okay, come on, let's go.",
-    # Kept short and unlike real speech: Whisper sometimes writes its prompt into the transcript.
-    "en": "GTA livestream with chat.",
+    # No prompt for English: Whisper wrote it into the transcript wherever the stream went quiet.
+    "en": "",
 }
 PROMPT = PROMPTS["hi"]
 
 
+# Prompts used by earlier versions; their words are cleaned out of transcripts made with them.
+OLD_PROMPTS = ["GTA livestream with chat.", "English gaming livestream: chat, bro, bruh, GTA, let's go, no way, what the, police, car, stream."]
+
+
 def prompt_for(language: str, names: str = "") -> str:
-    """Whisper prompt for the stream's language; names (like the streamer's) help it spell them right."""
-    return (f"{names}. " if names else "") + PROMPTS.get(language, PROMPTS["en"])
+    """Whisper prompt for the stream's language (Hindi only: it helps with Hinglish words)."""
+    if language != "hi":
+        return ""
+    return (f"{names}. " if names else "") + PROMPTS["hi"]
+
+
+def scrub(transcript: dict, extra: list[str] | None = None) -> dict:
+    """Remove every run of 3+ words copied from an English prompt (old or given), anywhere in the
+    transcript: Whisper repeats its prompt during silences. Hindi prompts are not used here, because
+    their phrases ("come on, let's go") are also real speech."""
+    phrases = [_norm(x).split() for x in OLD_PROMPTS + (extra or []) if x]
+    phrases += [["cenat"] + ph for ph in phrases]  # "CENAT. GTA livestream with chat." from the name prompt
+
+    def run_at(toks: list[str], i: int) -> int:
+        best = 0
+        for ph in phrases:
+            for j in range(len(ph)):
+                k = 0
+                while i + k < len(toks) and j + k < len(ph) and toks[i + k] == ph[j + k]:
+                    k += 1
+                best = max(best, k)
+        return best
+
+    def clean(items: list[str]) -> list[bool]:
+        toks = [_norm(x) for x in items]
+        keep, i = [True] * len(items), 0
+        while i < len(items):
+            k = run_at(toks, i)
+            if k >= 3:
+                keep[i: i + k] = [False] * k
+                i += k
+            else:
+                i += 1
+        return keep
+
+    words = transcript.get("words", [])
+    keep = clean([w["word"] for w in words])
+    segs = []
+    for s in transcript.get("segments", []):
+        parts = s["text"].split()
+        parts = [x for x, ok in zip(parts, clean(parts)) if ok]
+        if parts:
+            segs.append({**s, "text": " ".join(parts)})
+    removed = keep.count(False)
+    if removed:
+        print(f"  removed {removed} words Whisper copied from its instructions", flush=True)
+    return {**transcript, "words": [w for w, ok in zip(words, keep) if ok], "segments": segs}
 
 
 def load_key() -> str:
@@ -152,8 +201,9 @@ def transcribe(video: Path, key: str, model: str = "whisper-large-v3", on_piece=
         part = tmp / f"chunk_{i:03d}.mp3"
         make_chunk(video, start, part)
         t = time.perf_counter()
-        p = prompt or prompt_for(language)
-        res = strip_prompt_echo(transcribe_chunk(key, part, model, language, p), p)
+        p = prompt if prompt is not None else prompt_for(language)
+        res = transcribe_chunk(key, part, model, language, p)
+        res = strip_prompt_echo(res, p) if p else res
         print(f"  piece {i + 1}: {start // 60}-{min(total, start + CHUNK_SEC) // 60:.0f} min, {len(res.get('words', []))} words, {time.perf_counter() - t:.1f} s", flush=True)
         with lock:
             done += 1

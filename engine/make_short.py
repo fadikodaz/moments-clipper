@@ -346,7 +346,9 @@ def render_short(video: Path | None, start: float, length: float, out_dir: Path,
         pre, src, audio = f"{joined}concat=n={len(pairs)}:v=1:a=1[cv][ca];", "[cv]", "[ca]"
     else:
         pre, src, audio = "", f"[{pairs[0][0]}:v]", f"{pairs[0][1]}:a"
-    lf, where = layout_filter(*size, style, box, src, layout, zoom_windows)
+    # One copy of the source goes to a full-size picture of this moment (the Edit tab's live preview).
+    pre += f"{src}split=2[src0][src1];"
+    lf, where = layout_filter(*size, style, box, "[src0]", layout, zoom_windows)
     build_ass(shown, ass, hook, style, where["hook_y"])
 
     t = time.perf_counter()
@@ -357,7 +359,8 @@ def render_short(video: Path | None, start: float, length: float, out_dir: Path,
     fonts = "fontsdir=fonts:" if FONT_DIR.exists() else ""
     # One pass, two outputs: the short, and a clean cover frame of the gameplay part (before captions).
     vf = (f"{pre}{lf};[v0]split=2[m][p];[m]subtitles=filename={ass.name}:{fonts}charenc=UTF-8{bar}[v];"
-          f"[p]select='gte(t\\,{at})',crop=iw:{cover_h}:0:{cover_y},scale=480:-2[pv]")
+          f"[p]select='gte(t\\,{at})',crop=iw:{cover_h}:0:{cover_y},scale=480:-2[pv];"
+          f"[src1]select='gte(t\\,{at})',scale=1280:-2[fr]")
     # Fonts are found relative to the output folder, so copy them in once.
     if fonts and not (out_dir / "fonts").exists():
         (out_dir / "fonts").mkdir(exist_ok=True)
@@ -367,7 +370,8 @@ def render_short(video: Path | None, start: float, length: float, out_dir: Path,
         ["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", vf,
          "-t", f"{total:.2f}", "-map", "[v]", "-map", audio,
          *encoder_args(), "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", f"{name}.mp4",
-         "-map", "[pv]", "-frames:v", "1", "-update", "1", "-q:v", "3", f"{name}.jpg"],
+         "-map", "[pv]", "-frames:v", "1", "-update", "1", "-q:v", "3", f"{name}.jpg",
+         "-map", "[fr]", "-frames:v", "1", "-update", "1", "-q:v", "4", f"{name}.frame.jpg"],
         cwd=out_dir, capture_output=True, text=True,
     )
     if r.returncode:
@@ -376,7 +380,8 @@ def render_short(video: Path | None, start: float, length: float, out_dir: Path,
     if not (out_dir / f"{name}.jpg").exists():  # fallback cover from the finished short
         subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", str(at), "-i", f"{name}.mp4", "-frames:v", "1", "-vf", "scale=360:-2", "-q:v", "4", f"{name}.jpg"],
                        cwd=out_dir, capture_output=True)
-    return {"file": f"{name}.mp4", "poster": f"{name}.jpg", "hook": hook, "words": clip_words, "timings": timings, "style": style}
+    frame = f"{name}.frame.jpg" if (out_dir / f"{name}.frame.jpg").exists() else None
+    return {"file": f"{name}.mp4", "poster": f"{name}.jpg", "frame": frame, "hook": hook, "words": clip_words, "timings": timings, "style": style}
 
 
 def main() -> None:

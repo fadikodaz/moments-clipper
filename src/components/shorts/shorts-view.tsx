@@ -8,7 +8,7 @@ import type { EngineResult, JobMeta, ReviewMap, ReviewState } from "@/lib/jobs";
 import { cn } from "@/lib/utils";
 import { postCaption, toShorts, visibleShorts, type Short, type Sort } from "./model";
 import { ShortCard } from "./parts";
-import { WatchView, type Tab } from "./watch-view";
+import { WatchView, type Frame, type Tab } from "./watch-view";
 
 /** The open short lives in the URL hash (#watch=c03), so back/forward and reloads keep your place. */
 function useHash() {
@@ -22,9 +22,9 @@ function useHash() {
   );
 }
 
-type Props = { jobId: string; meta: JobMeta; result: EngineResult; initialReview: ReviewMap; notice: string | null; locked: boolean; onReload: () => void };
+type Props = { jobId: string; meta: JobMeta; result: EngineResult; initialReview: ReviewMap; notice: string | null; locked: boolean; onReload: () => void; frames: Frame[] };
 
-export function ShortsView({ jobId, meta, result, initialReview, notice, locked, onReload }: Props) {
+export function ShortsView({ jobId, meta, result, initialReview, notice, locked, onReload, frames }: Props) {
   const shorts = useMemo(() => toShorts(jobId, result.clips), [jobId, result.clips]);
   const best = useMemo(() => Math.max(...shorts.map((s) => s.score)), [shorts]);
   const [review, setReview] = useState<ReviewMap>(initialReview);
@@ -159,6 +159,8 @@ export function ShortsView({ jobId, meta, result, initialReview, notice, locked,
           onChanged={onReload}
           toast={toast.show}
           campaign={meta.campaign}
+          frames={frames}
+          detected={result.facecam ? { x: result.facecam.x, y: result.facecam.y, w: result.facecam.w, h: result.facecam.h } : null}
           short={watching}
           list={shown.some((s) => s.id === watching.id) ? shown : list}
           best={best}

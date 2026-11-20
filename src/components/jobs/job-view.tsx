@@ -10,7 +10,7 @@ import type { EngineResult, JobMeta, JobStatus, ReviewMap, Timeline } from "@/li
 import { cn } from "@/lib/utils";
 import { ProgressView } from "./progress-view";
 
-export type JobResponse = { meta: JobMeta; status: JobStatus; result: EngineResult | null; review: ReviewMap; timeline: Timeline | null };
+export type JobResponse = { meta: JobMeta; status: JobStatus; result: EngineResult | null; review: ReviewMap; timeline: Timeline | null; frames?: { url: string; t: number }[] };
 
 const isRunning = (s: JobStatus) => s.state === "running" || s.state === "queued";
 
@@ -118,6 +118,7 @@ export function JobView({ jobId }: { jobId: string }) {
           result={job.result!}
           initialReview={job.review}
           locked={running}
+          frames={job.frames ?? []}
           onReload={reload}
           notice={
             running

@@ -35,7 +35,7 @@ from fetch import FetchError, download_audio, download_video, info, is_url, remo
 from pick import pick
 from signals import extract_audio, fmt, loudness_per_second, score_seconds
 from style import normalize
-from transcribe import load_key, prompt_for, transcribe
+from transcribe import load_key, prompt_for, scrub, transcribe
 
 # Share of the progress bar each step takes (roughly its share of the waiting time).
 WEIGHTS = {1: 0.03, 2: 0.22, 3: 0.01, 4: 0.19, 5: 0.55}
@@ -53,8 +53,19 @@ class Status:
         self.weights = weights
         self.lock = threading.Lock()
         self.started = time.time()
+        self.last: tuple | None = None
+        # Heartbeat: a slow step (cutting on a slow connection) must not look like a crash to the website.
+        threading.Thread(target=self._beat, daemon=True).start()
+
+    def _beat(self) -> None:
+        while True:
+            time.sleep(30)
+            if self.last and self.last[0] == "running":
+                self._last_t = 0  # skip the throttle
+                self.write(*self.last)
 
     def write(self, state: str, step: int = 0, part: float = 0.0, detail: str = "", error: str | None = None) -> None:
+        self.last = (state, step, part, detail, error)
         done = sum(w for s, w in self.weights.items() if s < step) + self.weights.get(step, 0) * max(0.0, min(1.0, part))
         data = {"state": state, "step": step, "steps": len(self.weights), "label": LABELS.get(step, ""), "detail": detail,
                 "progress": 1.0 if state == "done" else round(done, 3), "part": round(max(0.0, min(1.0, part)), 3), "started": self.started, "updated": time.time(), "error": error}
@@ -160,6 +171,8 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
     transcript = (json.loads(tfile.read_text(encoding="utf-8")) if tfile.exists()
                   else transcribe(video, key, on_piece=lambda i, n: status.write("running", 2, i / n, f"Part {i} of {n}"),
                                   language=language, prompt=prompt_for(language, names)))
+    if language != "hi":
+        transcript = scrub(transcript)
     timings["2_listen"] = time.perf_counter() - t
 
     status.write("running", 3)
@@ -229,7 +242,7 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
             "capWords": r["words"],  # timed caption words, so they can be fixed and the short made again
             "sub": {k: sc.get(k) for k in ("hook", "action", "reaction", "clarity")},
             "layout": "facecam" if box or layout not in ("auto", "none") else "gameplay", "captions": captions,
-            "peakSec": p.get("peak"), "zoomSec": p.get("zoomSec", []), "style": r.get("style"),
+            "peakSec": p.get("peak"), "zoomSec": p.get("zoomSec", []), "style": r.get("style"), "frame": r.get("frame"),
         }
 
     def save(final: bool) -> None:

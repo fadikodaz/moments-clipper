@@ -67,11 +67,20 @@ def main() -> None:
         span = max(60.0, hi - lo)
         times = [round(lo + span * f) for f in (0.15, 0.38, 0.62, 0.85)]
 
+        def bright(f: Path) -> float:
+            r = subprocess.run(["ffmpeg", "-v", "error", "-i", str(f), "-vf", "scale=32:18,format=gray", "-f", "rawvideo", "-"], capture_output=True)
+            return sum(r.stdout) / max(1, len(r.stdout))
+
         def grab(i_t):
             i, t = i_t
             f = out / f"frame{i + 1}.jpg"
-            subprocess.run(["ffmpeg", "-y", "-v", "error", *input_for(t), "-frames:v", "1", "-vf", "scale=1280:-2", "-q:v", "3", str(f)],
-                           capture_output=True, timeout=120)
+            # Loading screens and fades are black: try a little later, up to 3 times.
+            for k in range(3):
+                f.unlink(missing_ok=True)
+                subprocess.run(["ffmpeg", "-y", "-v", "error", *input_for(t + k * 45), "-frames:v", "1", "-vf", "scale=1280:-2", "-q:v", "3", str(f)],
+                               capture_output=True, timeout=120)
+                if f.exists() and bright(f) > 25:
+                    return {"file": f.name, "t": t + k * 45}
             return {"file": f.name, "t": t} if f.exists() else None
 
         with ThreadPoolExecutor(max_workers=4) as pool:
