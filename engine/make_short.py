@@ -31,6 +31,8 @@ FPS = 30
 FONT_DIR = Path(__file__).with_name("fonts")
 
 
+LOUDNESS = -14  # LUFS, the level the platforms normalise to
+
 def even(x: float) -> int:
     return max(2, int(x) // 2 * 2)
 
@@ -367,7 +369,7 @@ def render_short(video: Path | None, start: float, length: float, out_dir: Path,
         joined = "".join(f"[{v}:v][{a}:a]" for v, a in pairs)
         pre, src, audio = f"{joined}concat=n={len(pairs)}:v=1:a=1[cv][ca];", "[cv]", "[ca]"
     else:
-        pre, src, audio = "", f"[{pairs[0][0]}:v]", f"{pairs[0][1]}:a"
+        pre, src, audio = "", f"[{pairs[0][0]}:v]", f"[{pairs[0][1]}:a]"
     # One copy of the source goes to a full-size picture of this moment (the Edit tab's live preview).
     pre += f"{src}split=2[src0][src1];"
     lf, where = layout_filter(*size, style, box, "[src0]", layout, zoom_windows)
@@ -382,7 +384,9 @@ def render_short(video: Path | None, start: float, length: float, out_dir: Path,
     # One pass, two outputs: the short, and a clean cover frame of the gameplay part (before captions).
     vf = (f"{pre}{lf};[v0]split=2[m][p];[m]subtitles=filename={ass.name}:{fonts}charenc=UTF-8{bar}[v];"
           f"[p]select='gte(t\\,{at})',crop=iw:{cover_h}:0:{cover_y},scale=480:-2[pv];"
-          f"[src1]select='gte(t\\,{at})',scale=1280:-2[fr]")
+          f"[src1]select='gte(t\\,{at})',scale=1280:-2[fr];"
+          # Loudness to -14 LUFS (what YouTube, TikTok and Instagram play at): quiet shorts get skipped.
+          f"{audio}loudnorm=I={LOUDNESS}:TP=-1.5:LRA=11,aresample=48000[aout]")
     # Fonts are found relative to the output folder, so copy them in once.
     if fonts and not (out_dir / "fonts").exists():
         (out_dir / "fonts").mkdir(exist_ok=True)
@@ -390,7 +394,7 @@ def render_short(video: Path | None, start: float, length: float, out_dir: Path,
             (out_dir / "fonts" / f.name).write_bytes(f.read_bytes())
     r = subprocess.run(
         ["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", vf,
-         "-t", f"{total:.2f}", "-map", "[v]", "-map", audio,
+         "-t", f"{total:.2f}", "-map", "[v]", "-map", "[aout]",
          *encoder_args(), "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", f"{name}.mp4",
          "-map", "[pv]", "-frames:v", "1", "-update", "1", "-q:v", "3", f"{name}.jpg",
          "-map", "[fr]", "-frames:v", "1", "-update", "1", "-q:v", "4", f"{name}.frame.jpg"],

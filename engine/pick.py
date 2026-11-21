@@ -30,6 +30,7 @@ OVERLAP = 60
 PER_PART = 3           # moments the AI may propose per part
 CLIP_MIN, CLIP_MAX = 60, 150
 MIN_OVERALL = 55       # below this the AI judged it not worth posting
+GAP_BETWEEN = 30        # seconds between two picked shorts
 SECONDS_PER_SHORT = 5 * 60  # about one short per 5 minutes of video, so shorts don't overlap in content
 
 LENGTHS = {"auto": (60, 150), "short": (30, 60), "long": (60, 180)}
@@ -197,7 +198,8 @@ def pick(video: Path, key: str, transcript: dict, loud: np.ndarray, top: int = 1
     picks.sort(key=lambda p: float(p.get("overall", 0)), reverse=True)
     final = []
     for p in picks:
-        if all(min(p["end"], q["end"]) - max(p["start"], q["start"]) < 0.25 * (p["end"] - p["start"]) for q in final):
+        # ...and keep 30 s between shorts: back-to-back clips feel like one story cut in two.
+        if all(max(p["start"], q["start"]) - min(p["end"], q["end"]) >= GAP_BETWEEN for q in final):
             final.append(p)
     limit = count if count else max(3, min(top, round(total / SECONDS_PER_SHORT)))
     final = final[:limit]

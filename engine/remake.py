@@ -18,6 +18,7 @@ import sys
 import threading
 import time
 import traceback
+from qc import safe_check
 from pathlib import Path
 
 from fetch import FetchError, download_range, remote_source
@@ -204,7 +205,8 @@ def remake_one(job_dir: Path, clip_id: str, edits: dict) -> bool:
         old = [clip["file"], clip["poster"], Path(clip["file"]).with_suffix(".ass").name] + ([clip["frame"]] if clip.get("frame") else [])
         clip.update({"file": res["file"], "poster": res["poster"], "startSec": round(new_start, 2), "durSec": round(length, 2),
                      "hook": hook or "", "words": " ".join(w["text"] for w in words), "capWords": words,
-                     "layout": choice, "captions": captions, "style": res["style"], "frame": res.get("frame"), "piece": piece, "edits": n})
+                     "layout": choice, "captions": captions, "style": res["style"], "frame": res.get("frame"), "piece": piece, "edits": n,
+                     "qc": safe_check(out / res["file"])})
         write_json(out / "clips.json", summary)
         tl_file = out / "timeline.json"
         if tl_file.exists():

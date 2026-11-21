@@ -26,6 +26,7 @@ import traceback
 import subprocess
 
 import numpy as np
+from qc import safe_check
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -364,7 +365,9 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
             if res is None:
                 failed += 1
             else:
-                ready.append(to_clip(p, res))
+                done = to_clip(p, res)
+                done["qc"] = safe_check(out_dir / res["file"])
+                ready.append(done)
                 save(final=False)
                 print(f"    #{p['rank']} done in {sum(res['timings'].values()):.0f} s: {p.get('title')}", flush=True)
             n = len(ready) + failed
