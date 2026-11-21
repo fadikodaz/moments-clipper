@@ -281,7 +281,7 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
             "capWords": r["words"],  # timed caption words, so they can be fixed and the short made again
             "sub": {k: sc.get(k) for k in ("hook", "action", "reaction", "clarity")},
             "layout": "facecam" if box or layout not in ("auto", "none") else "gameplay", "captions": captions,
-            "peakSec": p.get("peak"), "zoomSec": p.get("zoomSec", []), "style": r.get("style"), "frame": r.get("frame"), "piece": p.get("piece"),
+            "peakSec": p.get("peak"), "zoomSec": p.get("zoomSec", []), "style": r.get("style"), "frame": r.get("frame"), "card": r.get("card"), "piece": p.get("piece"),
         }
 
     def save(final: bool) -> None:

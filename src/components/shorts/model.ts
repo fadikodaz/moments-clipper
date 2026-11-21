@@ -7,7 +7,8 @@ export function toShorts(jobId: string, clips: EngineClip[]): Short[] {
   return clips.map((c) => ({
     ...c,
     videoUrl: `/api/jobs/${jobId}/files/${c.file}`,
-    posterUrl: `/api/jobs/${jobId}/files/${c.poster}`,
+    // The card shows the short with its facecam and captions; older shorts only have the gameplay cover.
+    posterUrl: `/api/jobs/${jobId}/files/${c.card ?? c.poster}`,
     frameUrl: c.frame ? `/api/jobs/${jobId}/files/${c.frame}` : null,
     downloadName: `${c.title.replace(/[^\w\s-]/g, "").trim() || c.id}.mp4`,
   }));

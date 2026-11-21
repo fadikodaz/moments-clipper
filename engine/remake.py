@@ -202,8 +202,8 @@ def remake_one(job_dir: Path, clip_id: str, edits: dict) -> bool:
         # Save under the new name (so browsers don't show the old cached video), then remove the old files.
         summary = json.loads((out / "clips.json").read_text(encoding="utf-8"))
         clip = next(c for c in summary["clips"] if c["id"] == clip_id)
-        old = [clip["file"], clip["poster"], Path(clip["file"]).with_suffix(".ass").name] + ([clip["frame"]] if clip.get("frame") else [])
-        clip.update({"file": res["file"], "poster": res["poster"], "startSec": round(new_start, 2), "durSec": round(length, 2),
+        old = [clip["file"], clip["poster"], Path(clip["file"]).with_suffix(".ass").name] + ([clip["frame"]] if clip.get("frame") else []) + ([clip["card"]] if clip.get("card") else [])
+        clip.update({"file": res["file"], "poster": res["poster"], "card": res.get("card"), "startSec": round(new_start, 2), "durSec": round(length, 2),
                      "hook": hook or "", "words": " ".join(w["text"] for w in words), "capWords": words,
                      "layout": choice, "captions": captions, "style": res["style"], "frame": res.get("frame"), "piece": piece, "edits": n,
                      "qc": safe_check(out / res["file"])})

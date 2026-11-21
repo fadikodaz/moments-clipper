@@ -33,6 +33,14 @@ FONT_DIR = Path(__file__).with_name("fonts")
 
 LOUDNESS = -14  # LUFS, the level the platforms normalise to
 
+
+def make_card(out_dir: Path, name: str, at: float) -> str | None:
+    """The short as viewers see it (facecam, captions, opening line gone), for cards in the app."""
+    card = f"{name}.card.jpg"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{max(0.0, at):.2f}", "-i", f"{name}.mp4", "-frames:v", "1", "-vf", "scale=540:-2", "-q:v", "3", card],
+                   cwd=out_dir, capture_output=True, timeout=60)
+    return card if (out_dir / card).exists() else None
+
 def even(x: float) -> int:
     return max(2, int(x) // 2 * 2)
 
@@ -407,7 +415,8 @@ def render_short(video: Path | None, start: float, length: float, out_dir: Path,
         subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", str(at), "-i", f"{name}.mp4", "-frames:v", "1", "-vf", "scale=360:-2", "-q:v", "4", f"{name}.jpg"],
                        cwd=out_dir, capture_output=True)
     frame = f"{name}.frame.jpg" if (out_dir / f"{name}.frame.jpg").exists() else None
-    return {"file": f"{name}.mp4", "poster": f"{name}.jpg", "frame": frame, "hook": hook, "words": clip_words, "timings": timings, "style": style}
+    card = make_card(out_dir, name, at)
+    return {"file": f"{name}.mp4", "poster": f"{name}.jpg", "frame": frame, "card": card, "hook": hook, "words": clip_words, "timings": timings, "style": style}
 
 
 def main() -> None:

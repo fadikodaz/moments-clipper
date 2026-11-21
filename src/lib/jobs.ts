@@ -127,6 +127,8 @@ export type EngineClip = {
   style?: Record<string, unknown>;
   /** Full-size picture of the source at this moment, for the Edit tab's live preview. */
   frame?: string | null;
+  /** The short as viewers see it (facecam and captions), for cards. */
+  card?: string | null;
   /** Automatic quality check of the finished file (engine/qc.py); ignored = the user said it's fine. */
   qc?: Qc | null;
 };
@@ -349,7 +351,7 @@ export async function deleteShort(id: string, clipId: string) {
   const result = await getResult(id);
   const clip = result?.clips.find((c) => c.id === clipId);
   if (!clip) return false;
-  for (const f of [clip.file, clip.poster]) {
+  for (const f of [clip.file, clip.poster, clip.card].filter((x): x is string => !!x)) {
     const full = outputFile(id, f);
     if (full) await unlink(full).catch(() => {});
   }
