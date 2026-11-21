@@ -65,7 +65,7 @@ export function Seg<T extends string>({ value, options, onChange, label }: { val
   return (
     <div role="group" aria-label={label} className="flex gap-0.5 rounded-[11px] border bg-background p-[3px]">
       {options.map(([v, l]) => (
-        <button key={v} type="button" aria-pressed={value === v} onClick={() => onChange(v)} className={cn("h-[34px] flex-1 rounded-lg px-2 text-[13px] font-semibold text-muted-foreground", value === v && "bg-raised text-foreground shadow-[0_0_0_1px_var(--border-strong)]")}>
+        <button key={v} type="button" aria-pressed={value === v} onClick={() => onChange(v)} className={cn("h-[34px] flex-1 whitespace-nowrap rounded-lg px-2.5 text-[13px] font-semibold text-muted-foreground", value === v && "bg-raised text-foreground shadow-[0_0_0_1px_var(--border-strong)]")}>
           {l}
         </button>
       ))}
