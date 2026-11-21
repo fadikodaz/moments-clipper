@@ -101,4 +101,4 @@ if (build.status !== 0) {
 }
 ok("App built");
 
-console.log("\n\x1b[1mAll set.\x1b[0m Start it with:\n\n  npm start\n\nthen open http://localhost:3000\n");
+console.log("\n\x1b[1mAll set.\x1b[0m Start it with:\n\n  npm start\n\nthen open http://127.0.0.1:3000\n");

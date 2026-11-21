@@ -51,7 +51,7 @@ npm run setup
 npm start
 ```
 
-`npm run setup` checks the tools, installs the Python packages, asks for your Groq key (and optionally a Claude key), and builds the app. Then open **http://localhost:3000**.
+`npm run setup` checks the tools, installs the Python packages, asks for your Groq key (and optionally a Claude key), and builds the app. Then open **http://127.0.0.1:3000**.
 
 Keys are saved in `engine/.env` on your PC and never leave it except to call Groq or Anthropic.
 
