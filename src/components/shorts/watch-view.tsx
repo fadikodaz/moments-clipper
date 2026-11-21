@@ -5,6 +5,7 @@ import { Check, ChevronLeft, ChevronRight, Copy, Download, Eye, EyeOff, Maximize
 import { Score, btn, btnGhost, btnPrimary, btnSm, formatTime } from "@/components/kit";
 import { cn } from "@/lib/utils";
 import { PLATFORMS, postKit, type CampaignRules, type Platform, type Short } from "./model";
+import { QcBox } from "./qc";
 
 export type Tab = "post" | "why";
 const TABS: [Tab, string, typeof Copy][] = [
@@ -32,6 +33,8 @@ type Props = {
   onDelete: (s: Short) => void;
   toast: (msg: string) => void;
   campaign?: CampaignRules;
+  /** The short was made again or changed: reload the project. */
+  onChanged: () => void;
 };
 
 export function WatchView(props: Props) {
@@ -142,6 +145,8 @@ function ShortBody({ player, ...p }: BodyProps) {
             <Trash2 aria-hidden="true" />
           </button>
         </div>
+
+        <QcBox jobId={p.jobId} short={short} onChanged={p.onChanged} toast={p.toast} />
 
         <div role="tablist" aria-label="About this short" className="mb-[18px] flex gap-[22px] border-b">
           {TABS.map(([k, label, Icon]) => (

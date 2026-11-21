@@ -127,6 +127,15 @@ export type EngineClip = {
   style?: Record<string, unknown>;
   /** Full-size picture of the source at this moment, for the Edit tab's live preview. */
   frame?: string | null;
+  /** Automatic quality check of the finished file (engine/qc.py); ignored = the user said it's fine. */
+  qc?: Qc | null;
+};
+export type Qc = {
+  status: "pass" | "warn" | "fail";
+  problems: { level: "warn" | "fail"; text: string }[];
+  lufs?: number | null;
+  duration?: number;
+  ignored?: boolean;
 };
 export type EngineResult = {
   video: string;
@@ -298,6 +307,17 @@ export async function getResult(id: string) {
   return readJson<EngineResult>(path.join(outDir(id), "clips.json"));
 }
 
+/** "It's fine": hide the quality-check warning of one short (a remake writes a new check). */
+export async function ignoreQc(id: string, clipId: string) {
+  const file = path.join(outDir(id), "clips.json");
+  const result = isJobId(id) ? await readJson<EngineResult>(file) : null;
+  const clip = result?.clips.find((c) => c.id === clipId);
+  if (!result || !clip?.qc) return false;
+  clip.qc.ignored = true;
+  await writeFile(file, JSON.stringify(result, null, 1));
+  return true;
+}
+
 export async function listJobs() {
   if (!existsSync(ROOT)) return [];
   const ids = (await readdir(ROOT)).filter(isJobId);
@@ -360,6 +380,8 @@ export type RemakeEdits = {
   lines: { from: number; to: number; text: string }[];
   /** The full look (engine/style.py); when present it wins over layout/captions. */
   style?: Record<string, unknown> | null;
+  /** Download the video again instead of reusing the saved piece (a black or frozen picture). */
+  fresh?: boolean;
 };
 export type RemakeStatus = { state: "running" | "done" | "failed"; error: string | null; started?: number; updated?: number };
 
@@ -375,7 +397,7 @@ export function parseEdits(raw: unknown): RemakeEdits | null {
     .filter((l): l is { from: number; to: number; text: string } => !!l && Number.isInteger(l.from) && Number.isInteger(l.to) && typeof l.text === "string")
     .slice(0, 500)
     .map((l) => ({ from: l.from, to: l.to, text: l.text.slice(0, 300) }));
-  return { startDelta: num(r.startDelta), endDelta: num(r.endDelta), hook: typeof r.hook === "string" ? r.hook.slice(0, 80) : "", layout: layout ?? "facecam", captions: captions ?? "bold", lines, style };
+  return { startDelta: num(r.startDelta), endDelta: num(r.endDelta), hook: typeof r.hook === "string" ? r.hook.slice(0, 80) : "", layout: layout ?? "facecam", captions: captions ?? "bold", lines, style, fresh: r.fresh === true };
 }
 
 const remakeFile = (id: string, clipId: string) => path.join(outDir(id), `remake-${clipId}.json`);

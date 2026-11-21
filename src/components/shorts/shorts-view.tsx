@@ -10,6 +10,7 @@ import { postCaption, toShorts, visibleShorts, type Short, type Sort } from "./m
 import { ShortCard } from "./parts";
 import { EditorView } from "@/components/editor/editor-view";
 import { WatchView, type Frame, type Tab } from "./watch-view";
+import { QcSummary } from "./qc";
 
 /** The open short lives in the URL hash (#watch=c03), so back/forward and reloads keep your place. */
 function useHash() {
@@ -192,6 +193,7 @@ export function ShortsView({ jobId, meta, result, initialReview, notice, locked,
           onHide={toggleHide}
           onCopy={copy}
           onDelete={remove}
+          onChanged={onReload}
         />
         <Toast msg={toast.msg} />
       </div>
@@ -300,6 +302,7 @@ export function ShortsView({ jobId, meta, result, initialReview, notice, locked,
             <option value="time">In video order</option>
           </select>
         </div>
+        <QcSummary shorts={shown} />
         <span className="inline-flex items-center gap-2 text-[13px] text-muted-foreground">
           What&apos;s the score?
           <span tabIndex={0} className="group/tip relative inline-grid size-[18px] cursor-help place-items-center rounded-full border border-border-strong text-[11px] font-semibold text-subtle">

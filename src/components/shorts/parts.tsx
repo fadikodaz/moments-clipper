@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { Check, Copy, Download, Ellipsis, Eye, EyeOff, Scissors, Trash2 } from "lucide-react";
 import { Menu, MenuItem, Score, formatTime } from "@/components/kit";
+import { QcBadge, QcLine } from "./qc";
 import { cn } from "@/lib/utils";
 import type { Short } from "./model";
 
@@ -82,6 +83,7 @@ export function ShortCard({ short, best, hidden, selecting, selected, onOpen, on
         ) : (
           <Score score={short.score} best={best} className="absolute top-2.5 left-2.5" />
         )}
+        {!selecting && <QcBadge short={short} className="absolute top-2.5 right-2.5" />}
         <span
           className={cn(
             "absolute right-2.5 bottom-2.5 rounded-md bg-background/85 px-[7px] font-mono text-xs font-medium transition-opacity [@media(hover:none)]:hidden",
@@ -153,6 +155,7 @@ export function ShortCard({ short, best, hidden, selecting, selected, onOpen, on
       <small className="-mt-1.5 text-[13px] text-subtle">
         {formatTime(short.durSec)} long, at {formatTime(short.startSec)} in the video
       </small>
+      <QcLine short={short} />
     </article>
   );
 }

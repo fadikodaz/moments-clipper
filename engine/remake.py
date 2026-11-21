@@ -170,7 +170,7 @@ def remake_one(job_dir: Path, clip_id: str, edits: dict) -> bool:
                 raise RuntimeError("The original video is missing, so the short can't be made again.")
             # The piece downloaded for this short covers 20 s either side; outside that, fetch a new one.
             pf = job_dir / "pieces" / piece["file"] if piece else None
-            if pf and pf.exists() and piece["base"] <= new_start and new_end <= piece["end"]:
+            if pf and pf.exists() and piece["base"] <= new_start and new_end <= piece["end"] and not edits.get("fresh"):
                 video, base = pf, float(piece["base"])
             else:
                 try:
