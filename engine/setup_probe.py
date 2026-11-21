@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from facecam import find_facecam
-from fetch import FetchError, has_pieces, is_url, remote_source, segment_frame_input
+from fetch import FetchError, has_pieces, is_url, remote_source, segment_frame_input, _formats
 
 
 def write(path: Path, data: dict) -> None:
@@ -67,6 +67,11 @@ def main() -> None:
                 input_for = lambda t: ["-ss", str(t), "-headers", rs["headers"], "-i", rs["video"]]
                 size = (rs["width"], rs["height"])
             total = a.duration or 0
+            if not total and fast:  # the length is needed to spread the pictures over the video, not past its end
+                try:
+                    total = float((_formats(a.source) or {}).get("duration") or 0)
+                except FetchError:
+                    total = 0
         else:
             input_for = lambda t: ["-ss", str(t), "-i", a.source]
             r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", a.source],

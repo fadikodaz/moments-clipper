@@ -12,19 +12,22 @@ If nothing convincing is found, the caller falls back to the default box.
 
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import numpy as np
 
 W, H = 320, 180  # frames are analysed small; the box is scaled back to the source size
+FW, FH = 640, 360  # frames for the face finder (faces in a facecam are only ~20 px wide at 320)
+MODEL = Path(__file__).with_name("models") / "yunet.onnx"
 
 
-def grab(input_args: list[str]) -> np.ndarray | None:
-    """One small colour frame, (H, W, 3) RGB."""
-    r = subprocess.run(["ffmpeg", "-v", "error", *input_args, "-frames:v", "1", "-vf", f"scale={W}:{H},format=rgb24",
+def grab(input_args: list[str], w: int = W, h: int = H) -> np.ndarray | None:
+    """One small colour frame, (h, w, 3) RGB."""
+    r = subprocess.run(["ffmpeg", "-v", "error", *input_args, "-frames:v", "1", "-vf", f"scale={w}:{h},format=rgb24",
                         "-f", "rawvideo", "-"], capture_output=True, timeout=90)
-    if r.returncode or len(r.stdout) != W * H * 3:
+    if r.returncode or len(r.stdout) != w * h * 3:
         return None
-    return np.frombuffer(r.stdout, dtype=np.uint8).reshape(H, W, 3).astype(np.float32)
+    return np.frombuffer(r.stdout, dtype=np.uint8).reshape(h, w, 3).astype(np.float32)
 
 
 def gray(frames: np.ndarray) -> np.ndarray:
@@ -48,12 +51,99 @@ def skin_share(frames: np.ndarray, box: dict) -> float:
     return float(np.median(skin.reshape(len(skin), -1).mean(axis=1)))
 
 
-def sample_frames(duration: float, input_for, n: int = 16) -> np.ndarray:
+def sample_frames(duration: float, input_for, n: int = 16, w: int = W, h: int = H) -> np.ndarray:
     """input_for(t) returns the FFmpeg input arguments that seek to second t."""
     times = np.linspace(duration * 0.08, duration * 0.92, n)
     with ThreadPoolExecutor(max_workers=8) as pool:
-        frames = [f for f in pool.map(lambda t: grab(input_for(float(t))), times) if f is not None]
-    return np.stack(frames) if len(frames) >= 6 else np.empty((0, H, W))
+        frames = [f for f in pool.map(lambda t: grab(input_for(float(t)), w, h), times) if f is not None]
+    return np.stack(frames) if len(frames) >= 6 else np.empty((0, h, w))
+
+
+def shrink(frames: np.ndarray) -> np.ndarray:
+    """Face-finder frames down to the edge-finder size (2x2 average)."""
+    if not len(frames):
+        return np.empty((0, H, W, 3), np.float32)
+    n, h, w, c = frames.shape
+    return frames.reshape(n, H, h // H, W, w // W, c).mean(axis=(2, 4))
+
+
+def faces(frames: np.ndarray) -> list[list[tuple[float, float, float, float]]]:
+    """Face boxes (x, y, w, h as fractions) in every frame, with OpenCV's YuNet model. [] per frame without faces;
+    an empty list overall when OpenCV or the model is missing (then only the edge finder is used)."""
+    try:
+        import os
+        os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")
+        import cv2
+        if not MODEL.exists() or not len(frames):
+            return []
+        cv2.setLogLevel(0) if hasattr(cv2, "setLogLevel") else None
+        h, w = frames.shape[1:3]
+        yn = cv2.FaceDetectorYN.create(str(MODEL), "", (w, h), 0.6)
+    except Exception:
+        return []
+    out = []
+    for f in frames:
+        _, fs = yn.detect(np.ascontiguousarray(f[..., ::-1]).astype(np.uint8))  # model wants BGR
+        out.append([(x / w, y / h, bw / w, bh / h) for x, y, bw, bh in ([] if fs is None else fs[:, :4])])
+    return out
+
+
+def face_cam(found: list[list[tuple]], share: float = 0.4) -> tuple[dict, list] | None:
+    """The facecam = faces that stay in the same spot in most frames (game characters move around).
+    Returns (box around those faces as fractions, the faces) or None. Two people side by side (a duo cam) share one box."""
+    if len(found) < 6:
+        return None
+    # Tracks: a face joins the track whose centre is closest (within about one face width), one face per track per frame.
+    tracks: list[dict] = []
+    for i, fs in enumerate(found):
+        for f in sorted(fs, key=lambda f: -f[2]):
+            if f[2] > 0.15:  # a face this big is a full-screen webcam or a cutscene, not an overlay
+                continue
+            cx, cy = f[0] + f[2] / 2, f[1] + f[3] / 2
+            near = [tr for tr in tracks if i not in tr["hits"] and abs(tr["cx"] - cx) < max(0.05, 0.9 * f[2]) and abs(tr["cy"] - cy) < max(0.06, 0.9 * f[3])]
+            tr = min(near, key=lambda tr: abs(tr["cx"] - cx) + abs(tr["cy"] - cy), default=None)
+            if tr is None:
+                tr = {"hits": {}, "cx": cx, "cy": cy}
+                tracks.append(tr)
+            tr["hits"][i] = f
+            ctr = np.array([(g[0] + g[2] / 2, g[1] + g[3] / 2) for g in tr["hits"].values()])
+            tr["cx"], tr["cy"] = float(np.median(ctr[:, 0])), float(np.median(ctr[:, 1]))
+    steady = []
+    for tr in tracks:
+        if len(tr["hits"]) < share * len(found):
+            continue
+        fs = list(tr["hits"].values())
+        ctr = np.array([(f[0] + f[2] / 2, f[1] + f[3] / 2) for f in fs])
+        if float(ctr.std(axis=0).max()) > 0.05:  # wanders around the screen: not an overlay
+            continue
+        steady.append((len(fs), fs))
+    if not steady:
+        return None
+    # the main cam, plus a second steady face right next to it (two streamers in one cam)
+    steady.sort(key=lambda s: -s[0])
+    main = steady[0][1]
+    med = lambda fs: np.median(np.array(fs), axis=0)
+    m = med(main)
+    people = [m]
+    for n, fs in steady[1:]:
+        o = med(fs)
+        if abs(o[1] - m[1]) < 2 * m[3] and abs((o[0] + o[2] / 2) - (m[0] + m[2] / 2)) < 5 * m[2]:
+            people.append(o)
+    l = min(p[0] for p in people); r = max(p[0] + p[2] for p in people)
+    t = min(p[1] for p in people); b = max(p[1] + p[3] for p in people)
+    fw = float(np.median([p[2] for p in people])); fh = float(np.median([p[3] for p in people]))
+    # head and shoulders: a margin around the faces, about 4:3 to 16:9 in real pixels
+    bw = min(1.0, (r - l) + 2.4 * fw)
+    bh = min(1.0, max((b - t) + 1.5 * fh, bw * 16 / 9 / 2.0))
+    cx, top = (l + r) / 2, t - 0.8 * fh
+    x0 = float(np.clip(cx - bw / 2, 0, 1 - bw)); y0 = float(np.clip(top, 0, 1 - bh))
+    return {"x": round(x0, 4), "y": round(y0, 4), "w": round(float(bw), 4), "h": round(float(bh), 4)}, [tuple(float(v) for v in p) for p in people]
+
+
+def contains(box: dict, people: list) -> bool:
+    """Every face lies inside the box."""
+    return all(box["x"] - 0.01 <= p[0] and p[0] + p[2] <= box["x"] + box["w"] + 0.01 and
+               box["y"] - 0.01 <= p[1] and p[1] + p[3] <= box["y"] + box["h"] + 0.01 for p in people)
 
 
 def detect(frames: np.ndarray, corner: str) -> dict | None:
@@ -151,10 +241,19 @@ def overlap(a: dict, b: dict) -> float:
 
 
 def find_facecam(duration: float, input_for, corner: str) -> dict | None:
-    frames = sample_frames(duration, input_for)
+    big = sample_frames(duration, input_for, w=FW, h=FH)
+    frames = shrink(big)
     if corner != "auto":
         return detect(frames, corner)
     found = [d for s in ("left", "right") for d in detect_side(frames, s)]
+    cam = face_cam(faces(big))
+    if cam:
+        box, people = cam
+        # The edge finder's box has the overlay's exact border: use it when the faces are inside it.
+        framed = [d for d in found if contains(d, people) and d["w"] * d["h"] < 0.35]
+        if framed:
+            return {**max(framed, key=lambda d: d["confidence"]), "faces": len(people), "how": "edges+faces"}
+        return {**box, "confidence": 5.0, "faces": len(people), "how": "faces"}
     if not found:
         return None
     # A box with a person in it beats a sharper box without one (minimaps and HUD panels have strong edges too).
