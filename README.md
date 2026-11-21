@@ -46,12 +46,13 @@ Open a **new** terminal after installing them, then:
 ```bash
 git clone https://github.com/fadikodaz/moments-clipper.git
 cd moments-clipper
-npm install
-npm run setup
-npm start
+npm i
+npm run dev
 ```
 
-`npm run setup` checks the tools, installs the Python packages, asks for your Groq key (and optionally a Claude key), and builds the app. Then open **http://127.0.0.1:3000**.
+`npm i` also installs the Python packages. Open **http://127.0.0.1:3000**: the first time, the app asks for your free Groq key (and optionally a Claude key). Then paste a link.
+
+Prefer the terminal, or want the faster production build? `npm run setup` does the same checks, asks for the keys there and builds the app; start it with `npm start`.
 
 Keys are saved in `engine/.env` on your PC and never leave it except to call Groq or Anthropic.
 

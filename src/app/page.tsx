@@ -1,5 +1,6 @@
 import { CaptionLine } from "@/components/home/caption-line";
 import { Intake } from "@/components/home/intake";
+import { KeyGate } from "@/components/home/key-gate";
 import { RecentProjects } from "@/components/home/recent";
 
 export default function HomePage() {
@@ -8,8 +9,10 @@ export default function HomePage() {
       <section className="mx-auto max-w-[760px]">
         <CaptionLine words={["Paste", "a", "stream.", "Get", "the", "shorts."]} />
       </section>
-      <Intake />
-      <RecentProjects />
+      <KeyGate>
+        <Intake />
+        <RecentProjects />
+      </KeyGate>
     </div>
   );
 }
