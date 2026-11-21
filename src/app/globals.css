@@ -50,9 +50,10 @@
   --color-bad: var(--bad);
   --color-info: var(--info);
 
-  --font-sans: var(--font-geist-sans), system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
-  --font-heading: var(--font-geist-sans), system-ui, sans-serif;
+  --font-sans: var(--font-figtree), system-ui, sans-serif;
+  /* No monospace look: numbers use the body font with tabular figures. */
+  --font-mono: var(--font-figtree), system-ui, sans-serif;
+  --font-heading: var(--font-bricolage), system-ui, sans-serif;
 
   --radius-sm: 6px;
   --radius-md: 8px;
@@ -80,39 +81,40 @@
 }
 
 :root {
-  --background: #101113;
-  --foreground: #f4f4f5;
-  --sidebar: #0c0d0f;
-  --panel: #16171a;
-  --raised: #1d1f23;
-  --hover: #25272c;
-  --border: #2a2c31;
-  --border-strong: #3a3d44;
-  --subtle: #8b8e96;
+  /* Night-stream navy with the yellow of a highlighted caption word (yellow = "do this next" only). */
+  --background: #131a2b;
+  --foreground: #eef1f7;
+  --sidebar: #111727;
+  --panel: #1a2236;
+  --raised: #222b42;
+  --hover: #29334d;
+  --border: #2f3a55;
+  --border-strong: #3d4a69;
+  --subtle: #6c7691;
 
   --card: var(--panel);
   --card-foreground: var(--foreground);
   --popover: var(--panel);
   --popover-foreground: var(--foreground);
-  --primary: #f4f4f5;
-  --primary-foreground: #101113;
+  --primary: #eef1f7;
+  --primary-foreground: #131a2b;
   --secondary: var(--raised);
   --secondary-foreground: var(--foreground);
   --muted: var(--raised);
-  --muted-foreground: #b0b2b9;
+  --muted-foreground: #97a1b9;
   --accent: var(--raised);
   --accent-foreground: var(--foreground);
-  --destructive: #f87171;
+  --destructive: #ff5c6c;
   --input: var(--border);
   --ring: var(--moment);
 
-  --moment: #ff7448;
-  --moment-soft: rgb(255 116 72 / 0.13);
-  --moment-ink: #1f0b03;
-  --good: #4ade80;
-  --warn: #fbbf24;
-  --bad: #f87171;
-  --info: #60a5fa;
+  --moment: #ffd23f;
+  --moment-soft: rgb(255 210 63 / 0.14);
+  --moment-ink: #1d1704;
+  --good: #5bd69a;
+  --warn: #ff9f43;
+  --bad: #ff5c6c;
+  --info: #7aa2ff;
 
   --radius: 8px;
   color-scheme: dark;
@@ -127,6 +129,10 @@
   }
   body {
     @apply bg-background text-foreground text-sm leading-normal antialiased;
+    font-variant-numeric: tabular-nums;
+  }
+  h1, h2 {
+    font-family: var(--font-heading);
   }
   :focus-visible {
     outline: 2px solid var(--moment);

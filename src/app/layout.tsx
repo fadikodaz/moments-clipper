@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Bricolage_Grotesque, Figtree } from "next/font/google";
 import { Suspense } from "react";
 import { MobileTabBar, MobileTabBarView, Sidebar, SidebarView } from "@/components/shell/sidebar";
+import { DialogProvider } from "@/components/ui/dialogs";
 import "./globals.css";
 
-const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
-const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
+const figtree = Figtree({ variable: "--font-figtree", subsets: ["latin"] });
+const bricolage = Bricolage_Grotesque({ variable: "--font-bricolage", subsets: ["latin"], weight: ["500", "600", "700", "800"] });
 
 export const metadata: Metadata = {
   title: "Moments",
@@ -14,8 +15,9 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
+    <html lang="en" className={`${figtree.variable} ${bricolage.variable}`}>
       <body>
+        <DialogProvider>
         <div className="flex min-h-dvh">
           <Suspense fallback={<SidebarView pathname="" />}>
             <Sidebar />
@@ -25,6 +27,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <Suspense fallback={<MobileTabBarView pathname="" />}>
           <MobileTabBar />
         </Suspense>
+        </DialogProvider>
       </body>
     </html>
   );

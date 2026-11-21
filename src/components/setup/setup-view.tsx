@@ -3,10 +3,12 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ChevronLeft, LoaderCircle, Play, RotateCcw, Sparkles } from "lucide-react";
-import { Toast, api, btn, btnCta, btnGhost, btnLg, field, formatTime, useToast } from "@/components/kit";
+import { Toast, api, btn, btnCta, btnGhost, btnLg, formatTime, useToast } from "@/components/kit";
 import type { JobMeta, Preset, Probe, TestRender } from "@/lib/jobs";
 import { cn } from "@/lib/utils";
 import { CaptionPanel, EffectsPanel, HookPanel, LayoutPanel, Panel, ToolBar, type ToolKey } from "@/components/editor/tools";
+import { RangeSlider, Select } from "@/components/ui/controls";
+import { useDialogs } from "@/components/ui/dialogs";
 import { FrameEditor } from "./frame-editor";
 import { PhonePreview, type Part } from "./phone-preview";
 import { DEFAULT_STYLE, usesCam, withDefaults, type Style } from "./style";
@@ -41,6 +43,7 @@ export function SetupView({ jobId, meta, onStarted }: { jobId: string; meta: Job
   const [tool, setTool] = useState<ToolKey>("layout");
   const [sel, setSel] = useState<Part | null>("cam");
   const toast = useToast();
+  const dialogs = useDialogs();
   const who = meta.campaign?.streamer || mention?.split(" ")[0];
   function pick(p: Part) {
     setSel(p);
@@ -123,7 +126,7 @@ export function SetupView({ jobId, meta, onStarted }: { jobId: string; meta: Job
   }
 
   async function savePreset() {
-    const name = window.prompt("Name this look", meta.campaign ? `${meta.campaign.streamer || meta.campaign.name} style` : "My style");
+    const name = await dialogs.prompt({ title: "Save this look", body: "Use it again on your next video with one click.", label: "Name", initial: meta.campaign ? `${meta.campaign.streamer || meta.campaign.name} style` : "My style", action: "Save look" });
     if (!name?.trim()) return;
     try {
       const p = await api<Preset>("/api/presets", { method: "POST", json: { name: name.trim(), style: { ...eff, cam: null }, minLen, maxLen } });
@@ -155,7 +158,6 @@ export function SetupView({ jobId, meta, onStarted }: { jobId: string; meta: Job
   const partSec = Math.max(60, partTo - partFrom || meta.durationSec || 3600);
   const n = Number(count) || Math.max(3, Math.round(partSec / 300));
   const minutes = Math.round(3 + (partSec / 3600) * 6 + n * 0.9);
-  const pct = (v: number) => ((v - 15) / 165) * 100;
 
   return (
     <div className="mx-auto max-w-[1260px] px-3.5 pt-[18px] pb-[130px] md:px-8 md:pt-8 md:pb-[120px]">
@@ -183,12 +185,14 @@ export function SetupView({ jobId, meta, onStarted }: { jobId: string; meta: Job
         {/* Left: the short as it will look, the 5-second test and saved looks */}
         <div className="grid justify-items-center gap-3 lg:sticky lg:top-5">
           <div className="flex w-full max-w-[320px] gap-2">
-            <select
-              value={preset}
-              aria-label="Saved look"
-              onChange={(e) => {
-                const p = presets.find((x) => x.id === e.target.value);
-                setPreset(e.target.value);
+            <Select
+              ariaLabel="Saved look"
+              className="min-w-0 flex-1"
+              value={preset || "none"}
+              onChange={(v) => {
+                const id = v === "none" ? "" : v;
+                const p = presets.find((x) => x.id === id);
+                setPreset(id);
                 if (!p) return;
                 setStyle({ ...withDefaults(p.style), cam: style.cam, nocam: style.nocam });
                 if (p.minLen && p.maxLen) {
@@ -196,15 +200,8 @@ export function SetupView({ jobId, meta, onStarted }: { jobId: string; meta: Job
                   setMaxLen(p.maxLen);
                 }
               }}
-              className={field}
-            >
-              <option value="">{presets.length ? "Your changes (not saved)" : "No saved looks yet"}</option>
-              {presets.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+              options={[["none", presets.length ? "Your changes (not saved)" : "No saved looks yet"], ...presets.map((p) => [p.id, p.name] as const)]}
+            />
             <button type="button" onClick={savePreset} className={btn}>
               Save look
             </button>
@@ -301,23 +298,9 @@ export function SetupView({ jobId, meta, onStarted }: { jobId: string; meta: Job
                     {minLen}–{maxLen} s
                   </b>
                 </span>
-                <div className="relative h-[26px] [&_input]:pointer-events-none [&_input]:absolute [&_input]:inset-0 [&_input]:w-full [&_input]:appearance-none [&_input]:bg-transparent [&_input]:accent-moment [&_input::-moz-range-thumb]:pointer-events-auto [&_input::-webkit-slider-thumb]:pointer-events-auto">
-                  <span className="absolute inset-x-0 top-[11px] h-1 rounded bg-hover" />
-                  <span className="absolute top-[11px] h-1 rounded bg-moment" style={{ left: `${pct(minLen)}%`, width: `${pct(maxLen) - pct(minLen)}%` }} />
-                  <input type="range" min={15} max={180} step={5} value={minLen} aria-label="Shortest" onChange={(e) => setMinLen(Math.min(Number(e.target.value), maxLen - 10))} />
-                  <input type="range" min={15} max={180} step={5} value={maxLen} aria-label="Longest" onChange={(e) => setMaxLen(Math.max(Number(e.target.value), minLen + 10))} />
-                </div>
+                <RangeSlider value={[minLen, maxLen]} min={15} max={180} step={5} labels={["Shortest", "Longest"]} onChange={([a, b]) => { setMinLen(Math.min(a, b - 10)); setMaxLen(Math.max(b, a + 10)); }} />
               </div>
-              <label className="grid gap-1.5">
-                <span className="text-xs font-semibold text-muted-foreground">How many shorts</span>
-                <select value={count} onChange={(e) => setCount(e.target.value)} className={field}>
-                  {COUNTS.map(([v, l]) => (
-                    <option key={v} value={v}>
-                      {l}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <Select label="How many shorts" value={count} onChange={setCount} options={COUNTS} />
             </Panel>
           )}
           {tool === "fx" && <EffectsPanel style={eff} set={set} noLogos={!!meta.campaign} />}

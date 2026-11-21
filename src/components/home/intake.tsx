@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { FileVideo, Link2, LoaderCircle, Sparkles, Upload } from "lucide-react";
 import { btn, btnCta, btnGhost, btnLg, btnPrimary, btnSm, field, formatTime } from "@/components/kit";
+import { Select } from "@/components/ui/controls";
 import type { Campaign } from "@/lib/jobs";
 import { cn } from "@/lib/utils";
 
@@ -223,32 +224,24 @@ export function Intake() {
           </div>
 
           <div className="grid grid-cols-2 gap-3 px-2 pt-4 pb-2 md:grid-cols-4">
-            <label className="grid gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Campaign</span>
-              <select
-                value={opts.campaignId}
-                disabled={starting}
-                onChange={(e) => {
-                  const c = campaigns.find((x) => x.id === e.target.value);
-                  setOpts((o) => ({ ...o, campaignId: e.target.value, language: c?.language ?? o.language }));
-                }}
-                className={field}
-              >
-                <option value="">None</option>
-                {campaigns.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="grid gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Language spoken</span>
-              <select value={opts.language} disabled={starting || !!opts.campaignId} onChange={(e) => setOpts((o) => ({ ...o, language: e.target.value }))} className={field}>
-                <option value="en">English</option>
-                <option value="hi">Hindi / Hinglish</option>
-              </select>
-            </label>
+            <Select
+              label="Campaign"
+              value={opts.campaignId || "none"}
+              disabled={starting}
+              onChange={(v) => {
+                const id = v === "none" ? "" : v;
+                const c = campaigns.find((x) => x.id === id);
+                setOpts((o) => ({ ...o, campaignId: id, language: c?.language ?? o.language }));
+              }}
+              options={[["none", "No campaign"], ...campaigns.map((c) => [c.id, c.name] as const)]}
+            />
+            <Select
+              label="Language spoken"
+              value={opts.language}
+              disabled={starting || !!opts.campaignId}
+              onChange={(v) => setOpts((o) => ({ ...o, language: v }))}
+              options={[["en", "English"], ["hi", "Hindi / Hinglish"]]}
+            />
             <label className="grid gap-1.5">
               <span className="text-xs font-medium text-muted-foreground">From (optional)</span>
               <input value={opts.from} disabled={starting} onChange={(e) => setOpts((o) => ({ ...o, from: e.target.value }))} placeholder="0:00:00" inputMode="numeric" className={field} />

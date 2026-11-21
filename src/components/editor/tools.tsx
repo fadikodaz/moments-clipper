@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { Clock, Layers, Sparkles, Subtitles, Type } from "lucide-react";
 import { field } from "@/components/kit";
+import { ColorPick, Fold, Select } from "@/components/ui/controls";
 import { Range, Switch } from "@/components/setup/controls";
 import { CAPTION_PRESETS, FONTS, HOOK_PRESETS, captionPreset, cssFont, type Layout, type Style } from "@/components/setup/style";
 import { cn } from "@/lib/utils";
@@ -78,38 +79,19 @@ export function Seg<T extends string>({ value, options, onChange, label }: { val
 /** Extra settings, closed by default so each panel stays calm. */
 export function More({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <details className="group border-t pt-3.5">
-      <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[13px] font-semibold text-muted-foreground hover:text-foreground">
-        <span className="grid size-[18px] place-items-center rounded-md bg-raised text-[13px] group-open:hidden">+</span>
-        <span className="hidden size-[18px] place-items-center rounded-md bg-raised text-[13px] group-open:grid">−</span>
-        {title}
-      </summary>
-      <div className="mt-3.5 grid gap-4">{children}</div>
-    </details>
+    <Fold title={title}>{children}</Fold>
   );
 }
 
 function Color({ label, value, onChange, disabled }: { label: string; value: string; onChange: (v: string) => void; disabled?: boolean }) {
   return (
-    <label className="grid gap-1.5">
-      <span className="text-xs font-semibold text-muted-foreground">{label}</span>
-      <input type="color" value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} className="h-[38px] w-full cursor-pointer rounded-[10px] border bg-panel p-[3px] disabled:opacity-40" />
-    </label>
+    <ColorPick label={label} value={value} onChange={onChange} disabled={disabled} />
   );
 }
 
 function FontPick({ value, onChange }: { value: Style["captions"]["font"]; onChange: (v: Style["captions"]["font"]) => void }) {
   return (
-    <label className="grid gap-1.5">
-      <span className="text-xs font-semibold text-muted-foreground">Font</span>
-      <select value={value} onChange={(e) => onChange(e.target.value as Style["captions"]["font"])} className={field}>
-        {FONTS.map(([k, l]) => (
-          <option key={k} value={k}>
-            {l}
-          </option>
-        ))}
-      </select>
-    </label>
+    <Select label="Font" value={value} onChange={onChange} options={FONTS.map(([k, l]) => [k, <span key={k} style={{ fontFamily: cssFont(k) }}>{l}</span>] as const)} />
   );
 }
 

@@ -11,6 +11,8 @@ import { ShortCard } from "./parts";
 import { EditorView } from "@/components/editor/editor-view";
 import { WatchView, type Frame, type Tab } from "./watch-view";
 import { QcSummary } from "./qc";
+import { Select } from "@/components/ui/controls";
+import { useDialogs } from "@/components/ui/dialogs";
 
 /** The open short lives in the URL hash (#watch=c03), so back/forward and reloads keep your place. */
 function useHash() {
@@ -37,6 +39,7 @@ export function ShortsView({ jobId, meta, result, initialReview, notice, locked,
   const [selecting, setSelecting] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const toast = useToast();
+  const dialogs = useDialogs();
 
   const hash = new URLSearchParams(useHash().slice(1));
   const watchId = hash.get("watch");
@@ -105,12 +108,12 @@ export function ShortsView({ jobId, meta, result, initialReview, notice, locked,
   );
 
   const remove = useCallback(
-    (s: Short) => {
-      if (!confirm(`Delete "${s.title}"? This can't be undone.`)) return;
+    async (s: Short) => {
+      if (!(await dialogs.confirm({ title: "Delete this short?", body: `“${s.title}” and its video file go from this computer.`, action: "Delete", cancel: "Keep it", danger: true }))) return;
       if (watchId === s.id) back();
       decide([s.id], "deleted", "Short deleted");
     },
-    [decide, watchId, back],
+    [decide, watchId, back, dialogs],
   );
 
   const copy = useCallback(
@@ -294,13 +297,7 @@ export function ShortsView({ jobId, meta, result, initialReview, notice, locked,
               </>
             )}
           </span>
-          <label htmlFor="sort" className="sr-only">
-            Sort shorts
-          </label>
-          <select id="sort" value={sort} onChange={(e) => setSort(e.target.value as Sort)} className={cn(field, "h-[34px] w-auto")}>
-            <option value="best">Best first</option>
-            <option value="time">In video order</option>
-          </select>
+          <Select size="sm" ariaLabel="Sort shorts" className="w-[160px]" value={sort} onChange={(v: Sort) => setSort(v)} options={[["best", "Best first"], ["time", "In video order"]] as const} />
         </div>
         <QcSummary shorts={shown} />
         <span className="inline-flex items-center gap-2 text-[13px] text-muted-foreground">

@@ -10,6 +10,7 @@ import { captionLines, type CampaignRules, type Short } from "@/components/short
 import { Player, type Frame } from "@/components/shorts/watch-view";
 import type { RemakeAllStatus, RemakeEdits, RemakeStatus } from "@/lib/jobs";
 import { cn } from "@/lib/utils";
+import { Checkbox, Slider } from "@/components/ui/controls";
 import { CaptionPanel, EffectsPanel, HookPanel, LayoutPanel, More, Panel, ToolBar, type ToolKey } from "./tools";
 
 const SHIFT = 15;
@@ -298,20 +299,8 @@ function Editor({ jobId, short, total, videoSec, canFacecam, defaultCaptions, fr
                   <span className="absolute inset-y-0 rounded-[10px] border-2 border-moment bg-moment/10" style={{ left: `${keepL}%`, width: `${keepW}%` }} />
                 </div>
                 <div className="grid gap-3.5 sm:grid-cols-2">
-                  <label className="grid gap-1.5">
-                    <span className="flex justify-between text-xs font-semibold text-muted-foreground">
-                      <span>Start</span>
-                      <b className="font-mono text-foreground">{signed(sd)}</b>
-                    </span>
-                    <input type="range" min={Math.max(-SHIFT, -Math.floor(short.startSec))} max={SHIFT} value={sd} onChange={(e) => setSd(Number(e.target.value))} className="w-full accent-moment" />
-                  </label>
-                  <label className="grid gap-1.5">
-                    <span className="flex justify-between text-xs font-semibold text-muted-foreground">
-                      <span>End</span>
-                      <b className="font-mono text-foreground">{signed(ed)}</b>
-                    </span>
-                    <input type="range" min={-SHIFT} max={Math.max(0, Math.min(SHIFT, Math.floor(videoSec - short.startSec - short.durSec)))} value={ed} onChange={(e) => setEd(Number(e.target.value))} className="w-full accent-moment" />
-                  </label>
+                  <Slider label="Start" value={sd} shown={signed(sd)} min={Math.max(-SHIFT, -Math.floor(short.startSec))} max={SHIFT} onChange={setSd} />
+                  <Slider label="End" value={ed} shown={signed(ed)} min={-SHIFT} max={Math.max(0, Math.min(SHIFT, Math.floor(videoSec - short.startSec - short.durSec)))} onChange={setEd} />
                 </div>
                 <p className={cn("text-[13px]", newLen < 5 ? "text-bad" : "text-muted-foreground")}>
                   {newLen < 5 ? "Too short: a short needs at least 5 seconds." : `From ${formatTime(short.startSec + sd)} in the video, ${Math.round(newLen)} seconds long.`}
@@ -345,10 +334,9 @@ function Editor({ jobId, short, total, videoSec, canFacecam, defaultCaptions, fr
                     {nChanges} change{nChanges > 1 ? "s" : ""}
                   </b>
                   {total > 1 && (
-                    <label className={cn("inline-flex cursor-pointer items-center gap-2 text-[13px] text-muted-foreground", !lookChanged && "opacity-50")}>
-                      <input type="checkbox" checked={toAll && lookChanged} disabled={!lookChanged} onChange={(e) => setToAll(e.target.checked)} className="size-4 accent-moment" />
+                    <Checkbox checked={toAll && lookChanged} disabled={!lookChanged} onChange={setToAll}>
                       Use this look for all {total} shorts
-                    </label>
+                    </Checkbox>
                   )}
                   {job?.state === "failed" && (
                     <span className="flex items-center gap-1.5 text-[13px] text-bad">

@@ -6,6 +6,7 @@ import { LoaderCircle } from "lucide-react";
 import { Toast, api, btn, btnPrimary, useToast } from "@/components/kit";
 import { SetupView } from "@/components/setup/setup-view";
 import { ShortsView } from "@/components/shorts/shorts-view";
+import { useDialogs } from "@/components/ui/dialogs";
 import type { EngineResult, JobMeta, JobStatus, ReviewMap, Timeline } from "@/lib/jobs";
 import { cn } from "@/lib/utils";
 import { ProgressView } from "./progress-view";
@@ -26,6 +27,7 @@ export function JobView({ jobId }: { jobId: string }) {
   const [busy, setBusy] = useState(false);
   const [sawRunning, setSawRunning] = useState(false);
   const toast = useToast();
+  const dialogs = useDialogs();
 
   useEffect(() => {
     let stop = false;
@@ -60,7 +62,7 @@ export function JobView({ jobId }: { jobId: string }) {
   const reload = useCallback(() => setRound((n) => n + 1), []);
 
   async function act(action: "cancel" | "retry") {
-    if (action === "cancel" && !confirm("Stop making shorts for this video? Shorts that are already finished are kept.")) return;
+    if (action === "cancel" && !(await dialogs.confirm({ title: "Stop making shorts?", body: "Shorts that are already finished stay in the project.", action: "Stop", cancel: "Keep going", danger: true }))) return;
     setBusy(true);
     try {
       await api(`/api/jobs/${jobId}`, { method: "PATCH", json: { action } });

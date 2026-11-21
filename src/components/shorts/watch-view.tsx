@@ -6,6 +6,7 @@ import { Score, btn, btnGhost, btnPrimary, btnSm, formatTime } from "@/component
 import { cn } from "@/lib/utils";
 import { PLATFORMS, postKit, type CampaignRules, type Platform, type Short } from "./model";
 import { QcBox } from "./qc";
+import { Fold } from "@/components/ui/controls";
 
 export type Tab = "post" | "why";
 const TABS: [Tab, string, typeof Copy][] = [
@@ -358,10 +359,9 @@ function Why({ short }: { short: Short }) {
           })}
         </div>
       </div>
-      <details>
-        <summary className="cursor-pointer text-[13px] text-muted-foreground hover:text-foreground">What was said in this short</summary>
-        <p className="mt-2 max-w-[65ch] text-[13px] text-muted-foreground italic">&ldquo;{short.words}&rdquo;</p>
-      </details>
+      <Fold title="What was said in this short">
+        <p className="max-w-[65ch] text-[13px] text-muted-foreground italic">&ldquo;{short.words}&rdquo;</p>
+      </Fold>
     </div>
   );
 }

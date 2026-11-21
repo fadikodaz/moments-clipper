@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { ExternalLink, LoaderCircle, Pencil, Plus, Trash2 } from "lucide-react";
 import { Toast, api, btn, btnCta, btnGhost, btnPrimary, btnSm, field, useToast } from "@/components/kit";
+import { Select } from "@/components/ui/controls";
+import { useDialogs } from "@/components/ui/dialogs";
 import type { Campaign } from "@/lib/jobs";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +20,7 @@ export function CampaignsView() {
   const [editing, setEditing] = useState<{ id: string | null; draft: Draft } | null>(null);
   const [saving, setSaving] = useState(false);
   const toast = useToast();
+  const dialogs = useDialogs();
 
   useEffect(() => {
     api<Campaign[]>("/api/campaigns", { cache: "no-store" })
@@ -40,7 +43,7 @@ export function CampaignsView() {
   }
 
   async function remove(c: Campaign) {
-    if (!confirm(`Delete the campaign "${c.name}"? Projects already made keep their rules.`)) return;
+    if (!(await dialogs.confirm({ title: "Delete this campaign?", body: `“${c.name}” goes. Projects already made keep its rules.`, action: "Delete", danger: true }))) return;
     try {
       await api(`/api/campaigns/${c.id}`, { method: "DELETE" });
       setList((l) => (l ?? []).filter((x) => x.id !== c.id));
@@ -109,13 +112,7 @@ export function CampaignsView() {
               <input value={editing.draft.keywords} onChange={(e) => set("keywords", e.target.value)} placeholder="GTA 6, GTA VI" className={field} />
               <span className={hint}>The AI puts one of these in each title, so people searching find it.</span>
             </label>
-            <label className={label}>
-              Stream language
-              <select value={editing.draft.language} onChange={(e) => set("language", e.target.value as Draft["language"])} className={field}>
-                <option value="en">English</option>
-                <option value="hi">Hindi / Hinglish</option>
-              </select>
-            </label>
+            <Select label="Stream language" value={editing.draft.language} onChange={(v) => set("language", v)} options={[["en", "English"], ["hi", "Hindi / Hinglish"]] as const} />
           </div>
           <label className={label}>
             What to look for

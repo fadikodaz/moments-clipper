@@ -2,6 +2,7 @@
 
 import { useId, type ReactNode } from "react";
 import { field } from "@/components/kit";
+import { ColorPick, Select, Slider, Toggle } from "@/components/ui/controls";
 import { cn } from "@/lib/utils";
 import { FONTS, LAYOUTS, type Layout, type Style } from "./style";
 
@@ -22,19 +23,9 @@ export function Switch({ label, hint, on, onChange, disabled }: { label: string;
   return (
     <div className="grid grid-cols-[1fr_auto] items-center gap-x-3.5 gap-y-0.5 border-t py-2.5 first:border-t-0">
       <b className="font-semibold">{label}</b>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={on}
-        aria-label={label}
-        disabled={disabled}
-        onClick={() => onChange(!on)}
-        className={cn(
-          "relative row-span-2 h-6 w-10 rounded-full bg-hover transition-colors disabled:cursor-not-allowed disabled:opacity-35",
-          "after:absolute after:top-[3px] after:left-[3px] after:size-[18px] after:rounded-full after:bg-muted-foreground after:transition-[left]",
-          on && "bg-moment after:left-[19px] after:bg-white",
-        )}
-      />
+      <span className="row-span-2">
+        <Toggle checked={on} onChange={onChange} label={label} disabled={disabled} />
+      </span>
       {hint && <small className="text-xs text-muted-foreground">{hint}</small>}
     </div>
   );
@@ -42,37 +33,19 @@ export function Switch({ label, hint, on, onChange, disabled }: { label: string;
 
 export function Range({ label, value, shown, min, max, step = 1, onChange }: { label: string; value: number; shown?: string; min: number; max: number; step?: number; onChange: (v: number) => void }) {
   return (
-    <label className="grid gap-1.5">
-      <span className="flex justify-between text-xs font-medium text-muted-foreground">
-        <span>{label}</span>
-        <b className="font-mono text-xs text-foreground">{shown ?? value}</b>
-      </span>
-      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} className="w-full accent-moment" />
-    </label>
+    <Slider label={label} value={value} shown={shown} min={min} max={max} step={step} onChange={onChange} />
   );
 }
 
 export function Pick<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: [T, string][]; onChange: (v: T) => void }) {
   return (
-    <label className="grid gap-1.5">
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      <select value={value} onChange={(e) => onChange(e.target.value as T)} className={field}>
-        {options.map(([v, l]) => (
-          <option key={v} value={v}>
-            {l}
-          </option>
-        ))}
-      </select>
-    </label>
+    <Select label={label} value={value} options={options} onChange={onChange} />
   );
 }
 
 function Color({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   return (
-    <label className="grid gap-1.5">
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      <input type="color" value={value} onChange={(e) => onChange(e.target.value)} className="h-[38px] w-full cursor-pointer rounded-[10px] border bg-panel p-[3px]" />
-    </label>
+    <ColorPick label={label} value={value} onChange={onChange} />
   );
 }
 

@@ -5,12 +5,14 @@ import { useState } from "react";
 import { Ellipsis, ExternalLink, FileVideo, Pencil, Trash2 } from "lucide-react";
 import { Menu, MenuItem, Toast, ago, api, btn, btnGhost, btnIcon, btnSm, field, formatTime, useToast } from "@/components/kit";
 import { cn } from "@/lib/utils";
+import { useDialogs } from "@/components/ui/dialogs";
 import { useJobs, type JobSummary } from "./use-jobs";
 
 /** Project cards: cover, state, length; a menu to rename, open the source, or delete. */
 export function ProjectGrid({ limit, empty }: { limit?: number; empty?: React.ReactNode }) {
   const { jobs, setJobs } = useJobs();
   const toast = useToast();
+  const dialogs = useDialogs();
 
   if (jobs === null) {
     return (
@@ -38,7 +40,7 @@ export function ProjectGrid({ limit, empty }: { limit?: number; empty?: React.Re
   }
 
   async function remove(j: JobSummary) {
-    if (!confirm(`Delete "${j.name}" and its shorts from this computer?`)) return;
+    if (!(await dialogs.confirm({ title: "Delete this project?", body: `“${j.name}” and all its shorts go from this computer.`, action: "Delete", danger: true }))) return;
     const before = jobs;
     setJobs((js) => js?.filter((x) => x.id !== j.id) ?? js);
     try {
