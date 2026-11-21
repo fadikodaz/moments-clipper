@@ -80,7 +80,7 @@ function ProjectCard({ job, onRename, onDelete }: { job: JobSummary; onRename: (
       ? { dot: "bg-bad", text: "Didn't finish" }
       : s === "cancelled" && !job.clips
         ? { dot: "bg-subtle", text: "Stopped" }
-        : { dot: "bg-moment", text: `${job.clips} short${job.clips === 1 ? "" : "s"}` };
+        : { dot: "bg-foreground/60", text: `${job.clips} short${job.clips === 1 ? "" : "s"}` };
 
   function save(value: string) {
     setEditing(false);

@@ -62,7 +62,6 @@ export function CampaignsView() {
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-[30px] leading-[1.15] font-[650] tracking-[-0.035em]">Campaigns</h1>
-          <p className="mt-1 max-w-[60ch] text-muted-foreground">Save the rules of a clipping campaign once. Shorts made for it focus on that streamer, and every caption gets the required name and hashtags.</p>
         </div>
         {!editing && (
           <button type="button" onClick={() => setEditing({ id: null, draft: EMPTY })} className={cn(btn, btnPrimary)}>
@@ -152,8 +151,8 @@ export function CampaignsView() {
                 <div className="min-w-0">
                   <h2 className="text-base font-semibold">{c.name}</h2>
                   <p className="mt-0.5 text-[13px] text-muted-foreground">
-                    {c.streamer || "Any streamer"} · {c.language === "en" ? "English" : "Hindi / Hinglish"}
-                    {c.mention && ` · captions mention “${c.mention}”`}
+                    {c.streamer || "Any streamer"}, {c.language === "en" ? "English" : "Hindi / Hinglish"}
+                    {c.mention && `, captions name "${c.mention}"`}
                   </p>
                 </div>
                 <span className="flex gap-1">
@@ -173,7 +172,7 @@ export function CampaignsView() {
               {[...c.hashtags, ...c.extraTags].length > 0 && (
                 <p className="mt-2.5 flex flex-wrap gap-1.5">
                   {c.hashtags.map((t) => (
-                    <span key={t} className="rounded-full bg-moment px-2 py-0.5 text-xs font-semibold text-moment-ink">
+                    <span key={t} className="rounded-full bg-foreground px-2 py-0.5 text-xs font-semibold text-background">
                       {t}
                     </span>
                   ))}
