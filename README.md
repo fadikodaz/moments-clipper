@@ -4,12 +4,12 @@
 
 A free, open-source alternative to paid clipping tools. Runs on your own PC: no sign-up, no watermark, no monthly fee.
 
-<p align="center"><img src="docs/img/shorts.jpg" alt="Shorts made from a 12-hour stream, with scores and quality check" width="100%"></p>
+<p align="center"><img src="docs/img/home.jpg" alt="Paste a YouTube link: the video shows at once, pick the part and the campaign" width="100%"></p>
 
 ## What it does
 
 - **Finds the moments worth posting.** It listens to the whole stream, reads what was said, measures how loud it got, and reads the **live chat replay**, so it knows where viewers went wild. An AI then picks the best standalone moments and starts each short right on the action.
-- **Handles really long streams.** 12-hour streams on slow internet: only the part you choose is downloaded, in small pieces at once.
+- **Handles really long streams.** Paste the link and pick the part on a slider (up to 4 hours at a time). Only that part is downloaded, in small pieces at once, so 12-hour streams work on slow internet too.
 - **Frames the streamer.** It finds the facecam anywhere on screen (also two people side by side) and puts it above or below the gameplay. You can drag the box if needed.
 - **Captions and opening line.** Word-by-word captions in several looks, an opening line that tells scrollers why to stay, the best second shown first, a zoom on the loudest moments and a progress bar.
 - **Clipping campaigns.** Paid clipping programs (like Content Rewards) have rules: name the streamer, use these hashtags, avoid that. Save a campaign once; every short, title and caption follows it.
@@ -17,9 +17,13 @@ A free, open-source alternative to paid clipping tools. Runs on your own PC: no 
 - **Post kit.** Title, caption and hashtags for TikTok, YouTube Shorts, Instagram Reels and X, ready to copy, plus a ZIP with everything.
 - **Edit without an editor.** Change the timing, captions, layout or opening line on a live preview; the short is made again in about a minute.
 
-| Set up and edit | One short, ready to post |
+| Your shorts | One short, ready to post |
 |---|---|
-| <img src="docs/img/editor.jpg" alt="Editor with live preview"> | <img src="docs/img/short-page.jpg" alt="A finished short with its post kit"> |
+| <img src="docs/img/shorts.jpg" alt="The shorts of a project, with the best pick and quality check"> | <img src="docs/img/short-page.jpg" alt="A finished short with its post kit"> |
+
+| Edit on a live preview |
+|---|
+| <img src="docs/img/editor.jpg" alt="Editor with live preview: opening line, captions, layout, timing, effects"> |
 
 ## What it costs
 
