@@ -248,7 +248,7 @@ export function SetupView({ jobId, meta, onStarted }: { jobId: string; meta: Job
                   <Play aria-hidden="true" /> Make a 5-second test
                 </button>
                 <p className={cn("text-center text-xs", testFailed ? "text-bad" : "text-muted-foreground")}>
-                  {testFailed ? data?.test?.error : "Click anything on the preview to change it; drag the opening line or captions to move them."}
+                  {testFailed ? data?.test?.error : "Click or drag on the preview to change it."}
                 </p>
               </>
             )}

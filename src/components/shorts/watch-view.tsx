@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useImperativeHandle, useRef, useState } from "react";
-import { Check, ChevronLeft, ChevronRight, Copy, Download, Eye, EyeOff, Maximize, Minimize, Pencil, Play, Sparkles, Trash2, Volume2, VolumeX } from "lucide-react";
-import { Score, btn, btnGhost, btnPrimary, btnSm, formatTime } from "@/components/kit";
+import { Check, ChevronLeft, ChevronRight, Copy, Download, Ellipsis, Eye, EyeOff, Maximize, Minimize, Pencil, Play, Sparkles, Trash2, Volume2, VolumeX } from "lucide-react";
+import { Menu, MenuItem, btn, btnCta, btnSm, formatTime } from "@/components/kit";
 import { cn } from "@/lib/utils";
 import { PLATFORMS, postKit, type CampaignRules, type Platform, type Short } from "./model";
 import { QcBox } from "./qc";
@@ -99,7 +99,6 @@ export function WatchView(props: Props) {
                 <span className="relative block aspect-[9/16] overflow-hidden rounded-xl border bg-black group-hover/more:border-border-strong">
                   {/* eslint-disable-next-line @next/next/no-img-element -- poster served by our own route */}
                   <img src={s.posterUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
-                  <Score score={s.score} best={props.best} className="absolute top-1.5 left-1.5 px-2 text-[11px] [&_b]:text-[11px]" />
                 </span>
                 <span className="line-clamp-2">{s.title}</span>
               </button>
@@ -117,34 +116,42 @@ type BodyProps = Props & { tab: Tab; onTab: (t: Tab) => void; player: React.RefO
 
 function ShortBody({ player, ...p }: BodyProps) {
   const { short, best, hidden, tab } = p;
+  const [menu, setMenu] = useState(false);
   return (
     <div className="grid items-start gap-[18px] lg:grid-cols-[auto_minmax(0,1fr)] lg:gap-9">
       <Player ref={player} short={short} />
 
       <div className="min-w-0">
-        <Score score={short.score} best={best} />
-        <h1 className="mt-2 mb-1.5 text-[22px] leading-[1.15] font-[650] tracking-[-0.03em] lg:text-[28px]">{short.title}</h1>
-        <p className="text-[13px] text-muted-foreground">
-          {Math.round(short.durSec)} seconds, from {formatTime(short.startSec)} in the video{short.edits ? " · edited" : ""}
+        <h1 className="text-[24px] leading-[1.15] font-bold tracking-[-0.025em] lg:text-[30px]">{short.title}</h1>
+        <p className="mt-1.5 text-sm text-muted-foreground">
+          {formatTime(short.durSec)} long, starts at {formatTime(short.startSec)}
+          {short.edits ? ", edited" : ""}
+          {hidden ? ", hidden" : ""}
         </p>
 
-        <div className="mt-[18px] mb-[22px] flex flex-wrap gap-2.5 max-lg:[&>*]:flex-1">
-          <a href={short.videoUrl} download={short.downloadName} className={cn(btn, btnPrimary)}>
+        <div className="mt-5 mb-6 flex flex-wrap items-center gap-2.5 max-lg:[&>a]:flex-1 max-lg:[&>button]:flex-1">
+          <a href={short.videoUrl} download={short.downloadName} className={cn(btn, btnCta)}>
             <Download aria-hidden="true" /> Download
           </a>
           <button type="button" onClick={() => p.onEdit(short)} disabled={p.locked} title={p.locked ? "Editing opens once all shorts are made" : undefined} className={btn}>
             <Pencil aria-hidden="true" /> Edit
           </button>
-          <button type="button" onClick={() => p.onCopy(short)} className={btn}>
-            <Copy aria-hidden="true" /> Copy caption
-          </button>
-          <button type="button" onClick={() => p.onHide(short.id)} className={cn(btn, btnGhost, "max-lg:flex-none")}>
-            {hidden ? <Eye aria-hidden="true" /> : <EyeOff aria-hidden="true" />}
-            {hidden ? "Show again" : "Hide"}
-          </button>
-          <button type="button" onClick={() => p.onDelete(short)} aria-label="Delete short" title="Delete short" className={cn(btn, btnGhost, "w-10 flex-none px-0 hover:text-bad")}>
-            <Trash2 aria-hidden="true" />
-          </button>
+          <span className="relative">
+            <button type="button" onClick={() => setMenu((m) => !m)} aria-label="More options" aria-expanded={menu} className={cn(btn, "w-10 px-0")}>
+              <Ellipsis aria-hidden="true" />
+            </button>
+            <Menu open={menu} onClose={() => setMenu(false)} className="top-[calc(100%+6px)] left-0">
+              <MenuItem icon={<Copy />} onClick={() => { setMenu(false); p.onCopy(short); }}>
+                Copy caption
+              </MenuItem>
+              <MenuItem icon={hidden ? <Eye /> : <EyeOff />} onClick={() => { setMenu(false); p.onHide(short.id); }}>
+                {hidden ? "Show again" : "Hide from this project"}
+              </MenuItem>
+              <MenuItem icon={<Trash2 />} danger onClick={() => { setMenu(false); p.onDelete(short); }}>
+                Delete short
+              </MenuItem>
+            </Menu>
+          </span>
         </div>
 
         <QcBox jobId={p.jobId} short={short} onChanged={p.onChanged} toast={p.toast} />
@@ -159,7 +166,7 @@ function ShortBody({ player, ...p }: BodyProps) {
               aria-selected={tab === k}
               aria-controls="tab-panel"
               onClick={() => p.onTab(k)}
-              className={cn("-mb-px inline-flex items-center gap-[7px] border-b-2 border-transparent py-2.5 font-semibold text-muted-foreground hover:text-foreground [&_svg]:size-4", tab === k && "border-moment text-foreground")}
+              className={cn("-mb-px inline-flex items-center gap-[7px] border-b-2 border-transparent py-2.5 font-semibold text-muted-foreground hover:text-foreground [&_svg]:size-4", tab === k && "border-foreground text-foreground")}
             >
               <Icon aria-hidden="true" /> {label}
             </button>
@@ -168,7 +175,7 @@ function ShortBody({ player, ...p }: BodyProps) {
 
         <div id="tab-panel" role="tabpanel" aria-labelledby={`tab-${tab}`}>
           {tab === "post" && <PostKit short={short} campaign={p.campaign} toast={p.toast} />}
-          {tab === "why" && <Why short={short} />}
+          {tab === "why" && <Why short={short} best={best} />}
         </div>
       </div>
     </div>
@@ -325,7 +332,6 @@ function PostKit({ short, campaign, toast }: { short: Short; campaign?: Campaign
           </button>
         </div>
       ))}
-      <p className="text-[13px] text-muted-foreground">Written by AI from what happens in the short. Change it after pasting if you like. Posting straight from here comes later.</p>
     </div>
   );
 }
@@ -339,10 +345,14 @@ const SUB: [keyof Short["sub"], string][] = [
   ["clarity", "Makes sense on its own"],
 ];
 
-function Why({ short }: { short: Short }) {
+function Why({ short, best }: { short: Short; best: number }) {
   return (
     <div className="grid gap-3.5">
       <div className="rounded-xl border bg-panel px-4 py-3.5">
+        <p className="mb-1 flex items-baseline gap-2">
+          <b className="font-heading text-2xl font-bold">{short.score}</b>
+          <span className="text-[13px] text-muted-foreground">out of 100{short.score === best ? ", the best pick of this video" : ""}</span>
+        </p>
         <p className="mb-3 text-[15px] text-muted-foreground">{short.reason}</p>
         <div className="grid gap-x-[18px] gap-y-2.5 sm:grid-cols-2">
           {SUB.map(([k, label]) => {

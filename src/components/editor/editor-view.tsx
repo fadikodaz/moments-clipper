@@ -244,7 +244,7 @@ function Editor({ jobId, short, total, videoSec, canFacecam, defaultCaptions, fr
                 onCaptionY={(y) => set((s) => ({ ...s, captions: { ...s.captions, y } }))}
                 onHookY={(y) => set((s) => ({ ...s, hook: { ...s.hook, pos: "custom", y } }))}
               />
-              <p className="max-w-[320px] text-center text-xs text-muted-foreground">Click anything on the short to change it. Drag the opening line or the captions to move them.</p>
+              <p className="max-w-[320px] text-center text-xs text-subtle">Click or drag on the short to change it.</p>
             </>
           ) : (
             <Player short={short} />
@@ -356,8 +356,7 @@ function Editor({ jobId, short, total, videoSec, canFacecam, defaultCaptions, fr
             ) : (
               <>
                 <div className="grid gap-0.5">
-                  <b className="text-sm font-medium text-muted-foreground">{short.edits ? "No new changes (this short was edited before)" : "No changes yet"}</b>
-                  <span className="text-xs text-subtle">Pick a tool above, or click something on the short.</span>
+                  <b className="text-sm font-medium text-muted-foreground">No changes yet</b>
                 </div>
                 <button type="button" disabled className={cn(btn, btnCta)}>
                   Save changes
@@ -365,7 +364,6 @@ function Editor({ jobId, short, total, videoSec, canFacecam, defaultCaptions, fr
               </>
             )}
           </div>
-          <p className="mt-2.5 text-xs text-subtle">Captions and layout are part of the video, so saving makes the short again (about 40 seconds).</p>
         </div>
       </div>
       <Toast msg={toast.msg} />

@@ -48,13 +48,10 @@ export function ToolBar({ tools, active, onPick, changed, labels }: { tools: Too
   );
 }
 
-export function Panel({ title, lead, children }: { title: string; lead?: string; children: ReactNode }) {
+export function Panel({ title, children }: { title: string; /** Kept for callers; not shown, to keep panels calm. */ lead?: string; children: ReactNode }) {
   return (
     <section role="tabpanel" className="grid gap-[18px] rounded-2xl border bg-panel p-[18px]">
-      <div>
-        <h2 className="text-base font-semibold">{title}</h2>
-        {lead && <p className="mt-0.5 text-[13px] text-muted-foreground">{lead}</p>}
-      </div>
+      <h2 className="font-sans text-base font-semibold tracking-normal">{title}</h2>
       {children}
     </section>
   );
@@ -97,7 +94,7 @@ function FontPick({ value, onChange }: { value: Style["captions"]["font"]; onCha
 
 function Preset({ on, label, frame, onClick, children }: { on: boolean; label: string; frame: string | null; onClick: () => void; children: ReactNode }) {
   return (
-    <button type="button" aria-pressed={on} onClick={onClick} className={cn("grid gap-[7px] rounded-xl border bg-raised p-2 text-xs font-medium text-muted-foreground hover:border-border-strong", on && "border-moment bg-moment-soft text-foreground")}>
+    <button type="button" aria-pressed={on} onClick={onClick} className={cn("grid gap-[7px] rounded-xl border bg-raised p-2 text-xs font-medium text-muted-foreground hover:border-border-strong", on && "border-foreground bg-raised text-foreground")}>
       <span className="grid h-[46px] place-items-center overflow-hidden rounded-lg bg-[#2a2d33] bg-cover bg-center px-1" style={frame ? { backgroundImage: `url(${frame})` } : undefined}>
         {children}
       </span>
@@ -273,7 +270,7 @@ export function LayoutPanel({ style: s, set, hasCam, who, camEditor }: { style: 
               aria-pressed={s.layout === k}
               title={needsCam && !hasCam ? "No facecam found yet: we'll place a box for you to drag onto the face" : undefined}
               onClick={() => set((x) => ({ ...x, layout: k, nocam: needsCam ? false : x.nocam, cam: needsCam && !hasCam ? (x.cam ?? DEFAULT_BOX) : x.cam }))}
-              className={cn("grid justify-items-center gap-1.5 rounded-xl border bg-raised px-1 py-2.5 text-[11px] leading-tight font-medium text-muted-foreground disabled:opacity-35", s.layout === k && "border-moment bg-moment-soft text-foreground")}
+              className={cn("grid justify-items-center gap-1.5 rounded-xl border bg-raised px-1 py-2.5 text-[11px] leading-tight font-medium text-muted-foreground disabled:opacity-35", s.layout === k && "border-foreground bg-raised text-foreground")}
             >
               <LayoutIcon k={k} />
               {label}

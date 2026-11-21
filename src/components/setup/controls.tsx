@@ -82,7 +82,7 @@ export function LayoutControls({ style: s, set, hasCam }: { style: Style; set: S
               onClick={() => set((x) => ({ ...x, layout: k, nocam: needsCam ? false : x.nocam }))}
               className={cn(
                 "grid justify-items-center gap-[7px] rounded-xl border bg-raised px-1.5 py-2.5 text-center text-xs leading-tight font-medium whitespace-pre-line text-muted-foreground disabled:opacity-35",
-                s.layout === k && "border-moment bg-moment-soft text-foreground",
+                s.layout === k && "border-foreground bg-raised text-foreground",
               )}
             >
               <LayoutIcon k={k} />

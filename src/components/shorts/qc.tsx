@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, LoaderCircle, RotateCcw, X } from "lucide-react";
+import { LoaderCircle, RotateCcw, X } from "lucide-react";
 import { api, btn, btnGhost, btnPrimary, btnSm } from "@/components/kit";
 import type { Qc, RemakeEdits, RemakeStatus } from "@/lib/jobs";
 import { cn } from "@/lib/utils";
@@ -93,14 +93,6 @@ export function QcBox({ jobId, short, onChanged, toast }: { jobId: string; short
   }, [state, url, onChanged, toast]);
 
   if (!q) return null;
-  const fine = [
-    !q.problems.some((p) => /long|short/i.test(p.text)) && `Length ${Math.round(q.duration ?? short.durSec)} s`,
-    !q.problems.some((p) => /sound|quiet|loud/i.test(p.text)) && "Sound level right for YouTube and TikTok",
-    !q.problems.some((p) => /black/i.test(p.text)) && "No black screen",
-    !q.problems.some((p) => /still|frozen/i.test(p.text)) && "No frozen picture",
-    !q.problems.some((p) => /silent/i.test(p.text)) && "Sound most of the time",
-  ].filter(Boolean) as string[];
-
   async function again() {
     setState("making");
     try {
@@ -131,12 +123,6 @@ export function QcBox({ jobId, short, onChanged, toast }: { jobId: string; short
           <li key={p.text} className={cn("flex items-baseline gap-2.5", tone[p.level])}>
             <span aria-hidden="true" className="w-4 text-center font-bold">{mark(p.level)}</span>
             {p.text}
-          </li>
-        ))}
-        {fine.map((t) => (
-          <li key={t} className="flex items-baseline gap-2.5 text-muted-foreground">
-            <Check aria-hidden="true" className="size-4 shrink-0 translate-y-0.5" />
-            {t}
           </li>
         ))}
       </ul>
