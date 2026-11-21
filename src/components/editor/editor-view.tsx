@@ -368,7 +368,7 @@ function Editor({ jobId, short, total, videoSec, canFacecam, defaultCaptions, fr
             ) : (
               <>
                 <div className="grid gap-0.5">
-                  <b className="text-sm font-medium text-muted-foreground">{short.edits ? "Saved. Press Current video to watch it." : "No changes yet"}</b>
+                  <b className="text-sm font-medium text-muted-foreground">{short.edits ? "No new changes (this short was edited before)" : "No changes yet"}</b>
                   <span className="text-xs text-subtle">Pick a tool above, or click something on the short.</span>
                 </div>
                 <button type="button" disabled className={cn(btn, btnCta)}>

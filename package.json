@@ -1,12 +1,13 @@
 {
-  "name": "app",
+  "name": "moments-clipper",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "setup": "node scripts/setup.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
@@ -28,5 +29,11 @@
     "eslint-config-next": "16.4.6",
     "tailwindcss": "4.3.3",
     "typescript": "^5"
+  },
+  "description": "Free AI clipper for long gaming streams: vertical shorts with captions, facecam layout and post text.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fadikodaz/moments-clipper.git"
   }
 }

@@ -1,0 +1,5 @@
+﻿# Python packages for the clip engine (install: python -m pip install -r engine/requirements.txt)
+requests>=2.31
+numpy>=1.26
+yt-dlp>=2026.10.26
+opencv-python-headless>=4.10
