@@ -2,16 +2,16 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { Check, ChevronLeft, Download, ExternalLink, EyeOff, LoaderCircle, Pencil } from "lucide-react";
-import { Toast, ago, api, btn, btnCta, btnGhost, btnIcon, btnPrimary, btnSm, field, formatTime, useToast } from "@/components/kit";
+import { Check, ChevronLeft, Download, Ellipsis, ExternalLink, EyeOff, LoaderCircle, Pencil } from "lucide-react";
+import { Menu, MenuItem, Toast, api, btn, btnCta, btnGhost, btnIcon, btnSm, field, formatTime, useToast } from "@/components/kit";
 import type { EngineResult, JobMeta, ReviewMap, ReviewState } from "@/lib/jobs";
 import { cn } from "@/lib/utils";
 import { postCaption, toShorts, visibleShorts, type Short, type Sort } from "./model";
 import { ShortCard } from "./parts";
 import { EditorView } from "@/components/editor/editor-view";
 import { WatchView, type Frame, type Tab } from "./watch-view";
-import { QcSummary } from "./qc";
-import { Select } from "@/components/ui/controls";
+import { qcIssue } from "./qc";
+import { Seg } from "@/components/editor/tools";
 import { useDialogs } from "@/components/ui/dialogs";
 
 /** The open short lives in the URL hash (#watch=c03), so back/forward and reloads keep your place. */
@@ -49,7 +49,10 @@ export function ShortsView({ jobId, meta, result, initialReview, notice, locked,
   const editId = hash.get("edit") ?? (tabParam === "edit" ? watchId : null);
   const editing = editId ? shorts.find((s) => s.id === editId && review[s.id] !== "deleted") : undefined;
   const canFacecam = !!result.facecam || !["auto", "none", undefined].includes(result.layout);
-  const list = visibleShorts(shorts, review, showHidden, sort);
+  const [onlyIssues, setOnlyIssues] = useState(false);
+  const [headMenu, setHeadMenu] = useState(false);
+  const issues = visibleShorts(shorts, review, false, sort).filter((s) => qcIssue(s)).length;
+  const list = visibleShorts(shorts, review, showHidden, sort).filter((s) => !onlyIssues || qcIssue(s));
   const shown = visibleShorts(shorts, review, false, sort);
   const hiddenCount = shorts.filter((s) => review[s.id] === "hidden").length;
   const watching = watchId ? shorts.find((s) => s.id === watchId && review[s.id] !== "deleted") : undefined;
@@ -209,7 +212,7 @@ export function ShortsView({ jobId, meta, result, initialReview, notice, locked,
         <ChevronLeft className="size-4" aria-hidden="true" /> All projects
       </Link>
 
-      <div className="mt-2.5 mb-[26px] flex flex-wrap items-end justify-between gap-5">
+      <div className="mt-2.5 mb-6 flex flex-wrap items-end justify-between gap-5">
         <div className="min-w-0">
           {editingName ? (
             <input
@@ -225,45 +228,44 @@ export function ShortsView({ jobId, meta, result, initialReview, notice, locked,
               className={cn(field, "h-[46px] w-[min(560px,80vw)] text-[22px] font-semibold")}
             />
           ) : (
-            <div className="group/name flex items-center gap-1.5">
-              <h1 className="text-[22px] leading-[1.15] font-[650] tracking-[-0.035em] md:text-[30px]">{name}</h1>
-              <button
-                type="button"
-                onClick={() => setEditingName(true)}
-                aria-label="Rename project"
-                className={cn(btn, btnSm, btnGhost, btnIcon, "opacity-0 group-hover/name:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100")}
-              >
-                <Pencil aria-hidden="true" />
-              </button>
-            </div>
+            <h1 className="max-w-[28ch] text-[24px] leading-[1.15] font-bold tracking-[-0.025em] md:text-[30px]">{name}</h1>
           )}
-          <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-muted-foreground">
-            {meta.url ? (
-              <a href={meta.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 hover:text-foreground">
-                <ExternalLink className="size-[15px]" aria-hidden="true" /> Open on YouTube
-              </a>
-            ) : (
-              <span>Uploaded file</span>
-            )}
-            <span>{formatTime(result.durationSec)} long</span>
-            <span>Made {ago(meta.created)}</span>
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            {meta.url ? "From YouTube" : "Uploaded recording"}, {formatTime(result.durationSec)}
           </p>
         </div>
-        <div className="flex gap-2 max-md:w-full max-md:[&>*]:flex-1">
+        <div className="relative flex gap-2 max-md:w-full max-md:[&>a]:flex-1">
           {selecting ? (
             <button type="button" onClick={endSelect} className={cn(btn, btnGhost)}>
               Cancel
             </button>
           ) : (
             <>
-              <button type="button" onClick={() => setSelecting(true)} disabled={!shown.length} className={btn}>
-                <Check aria-hidden="true" /> Select
-              </button>
               {shown.length > 0 && (
-                <a href={zip(shown.map((s) => s.id))} className={cn(btn, btnPrimary)}>
+                <a href={zip(shown.map((s) => s.id))} className={cn(btn, btnCta)}>
                   <Download aria-hidden="true" /> Download all {shown.length}
                 </a>
               )}
+              <span className="relative">
+                <button type="button" onClick={() => setHeadMenu((m) => !m)} aria-label="Project options" aria-expanded={headMenu} className={cn(btn, btnIcon, "w-10")}>
+                  <Ellipsis aria-hidden="true" />
+                </button>
+                <Menu open={headMenu} onClose={() => setHeadMenu(false)} className="top-[calc(100%+6px)] right-0">
+                  <MenuItem icon={<Pencil />} onClick={() => { setHeadMenu(false); setEditingName(true); }}>
+                    Rename
+                  </MenuItem>
+                  {meta.url && (
+                    <MenuItem icon={<ExternalLink />} onClick={() => { setHeadMenu(false); window.open(meta.url!, "_blank", "noopener"); }}>
+                      Open on YouTube
+                    </MenuItem>
+                  )}
+                  {shown.length > 1 && (
+                    <MenuItem icon={<Check />} onClick={() => { setHeadMenu(false); setSelecting(true); }}>
+                      Select several
+                    </MenuItem>
+                  )}
+                </Menu>
+              </span>
             </>
           )}
         </div>
@@ -271,47 +273,18 @@ export function ShortsView({ jobId, meta, result, initialReview, notice, locked,
 
       {notice && (
         <div role="status" className="mb-5 flex items-center gap-2.5 rounded-xl border bg-panel px-3.5 py-2.5 text-[13px] text-muted-foreground">
-          {notice.includes("appear here") && <LoaderCircle className="size-4 shrink-0 animate-spin text-moment" aria-hidden="true" />}
+          {notice.includes("appear here") && <LoaderCircle className="size-4 shrink-0 animate-spin text-foreground" aria-hidden="true" />}
           {notice}
         </div>
       )}
 
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5">
-          <span className="text-muted-foreground">
-            {showHidden ? (
-              <>
-                <b className="font-semibold text-foreground">{hiddenCount}</b> hidden{" "}
-                <button type="button" onClick={() => setShowHidden(false)} className="ml-1 text-[13px] underline decoration-border-strong underline-offset-[3px] hover:text-foreground">
-                  Back to all shorts
-                </button>
-              </>
-            ) : (
-              <>
-                <b className="font-semibold text-foreground">{shown.length}</b> shorts
-                {hiddenCount > 0 && (
-                  <button type="button" onClick={() => setShowHidden(true)} className="ml-2 text-[13px] underline decoration-border-strong underline-offset-[3px] hover:text-foreground">
-                    {hiddenCount} hidden
-                  </button>
-                )}
-              </>
-            )}
-          </span>
-          <Select size="sm" ariaLabel="Sort shorts" className="w-[160px]" value={sort} onChange={(v: Sort) => setSort(v)} options={[["best", "Best first"], ["time", "In video order"]] as const} />
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <div role="group" aria-label="Show" className="flex flex-wrap gap-1.5">
+          <Chip on={!showHidden && !onlyIssues} onClick={() => { setShowHidden(false); setOnlyIssues(false); }} label="All" n={shown.length} />
+          {issues > 0 && <Chip on={onlyIssues} onClick={() => { setShowHidden(false); setOnlyIssues(true); }} label="Needs a look" n={issues} dot="bg-warn" />}
+          {hiddenCount > 0 && <Chip on={showHidden} onClick={() => { setOnlyIssues(false); setShowHidden(true); }} label="Hidden" n={hiddenCount} />}
         </div>
-        <QcSummary shorts={shown} />
-        <span className="inline-flex items-center gap-2 text-[13px] text-muted-foreground">
-          What&apos;s the score?
-          <span tabIndex={0} className="group/tip relative inline-grid size-[18px] cursor-help place-items-center rounded-full border border-border-strong text-[11px] font-semibold text-subtle">
-            ?
-            <span
-              role="tooltip"
-              className="pointer-events-none absolute right-0 bottom-[calc(100%+8px)] z-30 w-[260px] rounded-[10px] border border-border-strong bg-raised px-3 py-2.5 text-left text-xs leading-[1.45] font-normal text-muted-foreground opacity-0 transition-opacity group-hover/tip:opacity-100 group-focus/tip:opacity-100 md:right-auto md:left-1/2 md:-translate-x-1/2"
-            >
-              How likely this moment works as a short, judged by AI from what was said and how intense the moment is. 80+ is a strong pick, 70+ is good.
-            </span>
-          </span>
-        </span>
+        <Seg label="Order" value={sort} onChange={setSort} options={[["best", "Best first"], ["time", "Video order"]]} />
       </div>
 
       {list.length ? (
@@ -341,7 +314,7 @@ export function ShortsView({ jobId, meta, result, initialReview, notice, locked,
           ))}
         </div>
       ) : (
-        <p className="py-[50px] text-center text-muted-foreground">{showHidden ? "Nothing hidden." : "Every short is hidden. Click “hidden” above to see them."}</p>
+        <p className="py-[50px] text-center text-muted-foreground">{showHidden ? "Nothing hidden." : onlyIssues ? "Every short passed the check." : "Every short is hidden."}</p>
       )}
 
       {selecting && (
@@ -374,5 +347,22 @@ export function ShortsView({ jobId, meta, result, initialReview, notice, locked,
 
       <Toast msg={toast.msg} raised={selecting} />
     </div>
+  );
+}
+
+function Chip({ on, onClick, label, n, dot }: { on: boolean; onClick: () => void; label: string; n: number; dot?: string }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      onClick={onClick}
+      className={cn(
+        "inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border px-3 text-[13px] font-semibold text-muted-foreground hover:border-border-strong hover:text-foreground",
+        on && "border-foreground bg-foreground text-background hover:border-foreground hover:text-background",
+      )}
+    >
+      {dot && <i className={cn("size-[7px] rounded-full", dot)} aria-hidden="true" />}
+      {label} <b className={cn("font-bold text-foreground", on && "text-background")}>{n}</b>
+    </button>
   );
 }

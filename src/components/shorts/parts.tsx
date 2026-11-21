@@ -2,8 +2,8 @@
 
 import { useRef, useState } from "react";
 import { Check, Copy, Download, Ellipsis, Eye, EyeOff, Scissors, Trash2 } from "lucide-react";
-import { Menu, MenuItem, Score, formatTime } from "@/components/kit";
-import { QcBadge, QcLine } from "./qc";
+import { Menu, MenuItem, formatTime } from "@/components/kit";
+import { QcBadge, QcLine, qcIssue } from "./qc";
 import { cn } from "@/lib/utils";
 import type { Short } from "./model";
 
@@ -80,9 +80,7 @@ export function ShortCard({ short, best, hidden, selecting, selected, onOpen, on
           <span className={cn("absolute top-2.5 left-2.5 grid size-[26px] place-items-center rounded-full border-2 border-white/85 bg-black/35 text-transparent", selected && "border-moment bg-moment text-moment-ink")}>
             <Check className="size-[15px]" strokeWidth={3} aria-hidden="true" />
           </span>
-        ) : (
-          <Score score={short.score} best={best} className="absolute top-2.5 left-2.5" />
-        )}
+        ) : null}
         {!selecting && <QcBadge short={short} className="absolute top-2.5 right-2.5" />}
         <span
           className={cn(
@@ -151,11 +149,8 @@ export function ShortCard({ short, best, hidden, selecting, selected, onOpen, on
         )}
       </div>
 
-      <h2 className="line-clamp-2 text-[15px] leading-[1.35] font-semibold tracking-[-0.01em]">{short.title}</h2>
-      <small className="-mt-1.5 text-[13px] text-subtle">
-        {formatTime(short.durSec)} long, at {formatTime(short.startSec)} in the video
-      </small>
-      <QcLine short={short} />
+      <h2 className="line-clamp-2 font-sans text-[15px] leading-[1.35] font-semibold tracking-[-0.005em]">{short.title}</h2>
+      {qcIssue(short) ? <QcLine short={short} /> : short.score === best && <span className="-mt-1 text-[13px] text-muted-foreground"><b className="font-semibold text-foreground">Best pick</b> of this video</span>}
     </article>
   );
 }

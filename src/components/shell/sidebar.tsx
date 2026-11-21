@@ -14,7 +14,7 @@ export function Sidebar() {
 export function SidebarView({ pathname }: { pathname: string }) {
   return (
     <nav aria-label="Main" className="sticky top-0 hidden h-dvh w-[220px] shrink-0 flex-col gap-1 border-r bg-sidebar px-3 py-4 md:flex">
-      <Link href="/" aria-label="Moments, new clips" className="px-2 pt-0.5 pb-[18px]">
+      <Link href="/" aria-label="Moments, new shorts" className="px-2 pt-0.5 pb-[18px]">
         <Logo />
       </Link>
       {NAV.map((item) => {
@@ -27,7 +27,7 @@ export function SidebarView({ pathname }: { pathname: string }) {
             aria-current={active ? "page" : undefined}
             className={cn(
               "flex h-[38px] items-center gap-2.5 rounded-[10px] px-2.5 text-sm font-medium text-muted-foreground hover:bg-raised hover:text-foreground",
-              active && "bg-raised text-foreground shadow-[inset_2px_0_0_var(--moment)]",
+              active && "bg-raised text-foreground",
             )}
           >
             <Icon className="size-[18px]" strokeWidth={2} aria-hidden="true" />
@@ -35,11 +35,6 @@ export function SidebarView({ pathname }: { pathname: string }) {
           </Link>
         );
       })}
-      <span className="flex-1" />
-      <div className="rounded-xl border bg-panel p-3 text-xs text-muted-foreground">
-        <b className="mb-0.5 block text-[13px] font-semibold text-foreground">Free while in beta</b>
-        Clip up to 4 hours of video at a time.
-      </div>
     </nav>
   );
 }
