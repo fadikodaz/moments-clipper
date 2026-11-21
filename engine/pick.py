@@ -21,6 +21,7 @@ from pathlib import Path
 import numpy as np
 
 from llm import CLAUDE_MODEL, MODEL, smart_json, using_claude
+from chat import tag_for
 from signals import SKIP_EDGES, fmt, loudness_per_second, score_seconds
 from transcribe import load_key
 
@@ -36,7 +37,7 @@ LENGTHS = {"auto": (60, 150), "short": (30, 60), "long": (60, 180)}
 SYSTEM_TEMPLATE = """You are the clip editor for a gaming-stream clipping tool. Viewers scroll Shorts/TikTok/Reels;
 a clip must grab attention in the first 2 seconds, hold it, and make sense without the rest of the stream.
 You read a part of a transcript from {speaker}. Lines look like "[612-615] text"
-(seconds into the video). LOUD marks a big volume spike (action, explosion, shouting, laughter).
+(seconds into the video). LOUD marks a big volume spike (action, explosion, shouting, laughter).{chat_rule}
 
 Propose up to {per_part} moments from this part that would each make a great standalone short.
 Good moments: a fail or win with a strong reaction, a funny exchange, a chase or fight with a payoff,
@@ -62,13 +63,22 @@ For each moment:
 Return only JSON: {{"moments":[{{"start":..,"end":..,"peak":..,"title":"..","reason":"..","hook":"..","tags":[..],"scores":{{"hook":..,"action":..,"reaction":..,"clarity":..}},"overall":..}}]}}"""
 
 
-def part_text(lo: float, hi: float, segments: list[dict], loud_z: np.ndarray) -> str:
+CHAT_RULE = """
+CHAT marks where the live chat exploded in those 10 seconds: x5 = five times the normal message speed, with the words
+it spammed most ("LMAO", "W", "💀"...). Real viewers reacting is the strongest sign of a great moment, so weigh it
+heavily. But ignore spikes the streamer asked for (\"chat, spam W\", \"say something nice\"), greetings, giveaways,
+donations and polls: those are not moments. A CHAT spike usually comes 2-10 seconds after what caused it."""
+
+
+def part_text(lo: float, hi: float, segments: list[dict], loud_z: np.ndarray, chat: dict | None = None, offset: float = 0.0) -> str:
     lines = []
     for s in segments:
         if s["end"] < lo or s["start"] > hi or not s["text"].strip():
             continue
         a, b = int(s["start"]), int(min(len(loud_z) - 1, s["end"]))
         mark = " LOUD" if b >= a and loud_z[a: b + 1].max() > 1.5 else ""
+        if chat:
+            mark += tag_for(chat, s["start"] + offset, s["end"] + offset)
         lines.append(f"[{int(s['start'])}-{int(round(s['end']))}]{mark} {s['text'].strip()}")
     return "\n".join(lines)
 
@@ -121,7 +131,7 @@ def campaign_brief(campaign: dict | None) -> str:
 
 def pick(video: Path, key: str, transcript: dict, loud: np.ndarray, top: int = 10, n_candidates: int = 0, on_batch=None,
          length: str = "auto", count: int | None = None, on_found=None, language: str = "hi", campaign: dict | None = None,
-         lengths: tuple[float, float] | None = None) -> dict:
+         lengths: tuple[float, float] | None = None, chat: dict | None = None, offset: float = 0.0) -> dict:
     """length: auto/short/long (see LENGTHS). count: exact number of shorts, or None for about one per 5 minutes.
     language: "hi" (Hinglish stream, Hinglish hooks) or "en". campaign: rules from a clipping campaign (campaign_brief).
     on_found(moments): called after each part with every moment accepted so far, for the live timeline."""
@@ -142,7 +152,7 @@ def pick(video: Path, key: str, transcript: dict, loud: np.ndarray, top: int = 1
                       f"(never repeat it or add a shortened name next to it)"
                       + (f", and include one of these search words when it fits naturally: {keywords}." if keywords else "."))
     system = SYSTEM_TEMPLATE.format(lo=int(lo_len), hi=int(hi_len), per_part=per_part, speaker=speaker, brief=campaign_brief(campaign),
-                                    hook_style=hook_style, title_rule=title_rule)
+                                    hook_style=hook_style, title_rule=title_rule, chat_rule=CHAT_RULE if chat else "")
     loud_z = score_seconds(loud, [])["loud_z"]
     total = float(len(loud))
     t0 = time.perf_counter()
@@ -154,7 +164,7 @@ def pick(video: Path, key: str, transcript: dict, loud: np.ndarray, top: int = 1
     proposals = []
     for n, lo in enumerate(starts, 1):
         hi = min(hi_edge, lo + part_len)
-        text = part_text(lo, hi, transcript["segments"], loud_z)
+        text = part_text(lo, hi, transcript["segments"], loud_z, chat, offset)
         if len(text) > 80:
             res = smart_json(key, [{"role": "system", "content": system},
                                   {"role": "user", "content": f"Part {n} of {len(starts)}: {fmt(lo)} to {fmt(hi)} of a {fmt(total)} video.\n\n{text}"}])
@@ -194,7 +204,7 @@ def pick(video: Path, key: str, transcript: dict, loud: np.ndarray, top: int = 1
     for i, p in enumerate(final, 1):
         p.update(rank=i, start_text=fmt(p["start"]), end_text=fmt(p["end"]), length=round(p["end"] - p["start"]))
 
-    out = {"video": str(video), "model": CLAUDE_MODEL if using_claude() else MODEL, "parts": len(starts), "proposed": len(proposals), "kept_by_ai": len(picks),
+    out = {"video": str(video), "model": CLAUDE_MODEL if using_claude() else MODEL, "parts": len(starts), "proposed": len(proposals), "kept_by_ai": len(picks), "chat_spikes": len(chat or {}),
            "seconds_taken": round(time.perf_counter() - t0, 1), "picks": final}
     (sig / f"{video.stem}.picks.json").write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"  {len(proposals)} proposed, {len(picks)} good enough, returning top {len(final)}")

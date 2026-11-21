@@ -31,6 +31,7 @@ from pathlib import Path
 
 from make_short import LAYOUTS, render_short, roman_line
 from facecam import find_facecam
+from chat import ChatFetch, spikes, summary
 from fetch import FetchError, download_audio, download_range, download_video, has_pieces, info, is_url, remote_source, segment_frame_input
 from pick import pick
 from signals import extract_audio, fmt, loudness_per_second, score_seconds
@@ -123,6 +124,7 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
     t_all = time.perf_counter()
     link = is_url(source)
     upload: Path | None = None
+    chat_job: ChatFetch | None = None
     audio_base: float | None = None  # video time where the downloaded audio starts (links, piece download)
     t = time.perf_counter()
     status.write("running", 1, 0, "Checking the link" if link else "")
@@ -143,6 +145,10 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
         retry = lambda n, m: status.write("running", 1, 0, f"YouTube refused, trying again ({n} of {m})")
         # Fastest: only the chosen part's sound, many small pieces at once. Kept with its start time for retries.
         lo, hi = part if part else (0.0, source_sec or MAX_PART_SECONDS)
+        # The live chat replay (if any) downloads next to the audio; it is a hint for the moment picker.
+        (job_dir / "signals").mkdir(exist_ok=True)
+        chat_job = ChatFetch(source, lo, hi, job_dir / "signals" / "chat.json")
+        chat_job.start()
         saved = job_dir / "source_audio.json"
         if saved.exists() and (job_dir / "source_audio.m4a").exists():
             audio_base = float(json.loads(saved.read_text(encoding="utf-8"))["base"])
@@ -213,11 +219,24 @@ def run(source: str, out_dir: Path, layout: str, top: int, status: Status, lengt
                 pass
         write_timeline(out_dir, timeline)
 
+    chat_tags = {}
+    if chat_job is not None:
+        if chat_job.is_alive():
+            status.write("running", 4, 0, "Reading the live chat")
+            waited = time.perf_counter()
+            while chat_job.is_alive() and chat_job.progress < 1:
+                chat_job.join(5)
+                status.write("running", 4, 0, f"Reading the live chat, {round(chat_job.progress * 100)}%")
+                if time.perf_counter() - waited > 1200:
+                    break
+        msgs = chat_job.wait(1)
+        chat_tags = spikes(msgs, chat_job.lo, chat_job.hi)
+        print(f"  chat: {summary(msgs, chat_tags)} {chat_job.note}", flush=True)
     status.write("running", 4, 0, "Reading what you said")
     t = time.perf_counter()
     picks = pick(video, key, transcript, loud, top=top, length=length, count=count, on_found=found,
                  on_batch=lambda i, n: status.write("running", 4, i / n, f"Read part {i} of {n}"), language=language, campaign=campaign,
-                 lengths=lengths)["picks"]
+                 lengths=lengths, chat=chat_tags, offset=offset)["picks"]
     # Campaigns that require the streamer's name on screen: make sure every opening line has it.
     mention = ((campaign or {}).get("mention") or "").strip()
     for p in picks:
