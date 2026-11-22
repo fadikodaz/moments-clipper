@@ -55,3 +55,7 @@ Thumbs.db
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# notes that `next dev` writes for AI coding tools (local only)
+AGENTS.md
+CLAUDE.md
